@@ -152,6 +152,7 @@
     <Compile Include="Commands\AlgorithmStatusCommand.cs" />
     <Compile Include="Commands\CancelOrderCommand.cs" />
     <Compile Include="Commands\ICommand.cs" />
+    <Compile Include="Commands\InspectorCommand.cs" />
     <Compile Include="Commands\LiquidateCommand.cs" />
     <Compile Include="Commands\OrderCommand.cs" />
     <Compile Include="Commands\QuitCommand.cs" />

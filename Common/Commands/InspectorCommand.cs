@@ -12,6 +12,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
 */
+
+using System;
 using System.CodeDom.Compiler;
 using System.Text;
 using Microsoft.CSharp;
@@ -37,8 +39,18 @@ namespace QuantConnect.Commands
         /// <returns></returns>
         public CommandResultPacket Run(IAlgorithm algorithm)
         {
-            var result = Evaluate(Query);
-            return new Result(this, true, result);
+            object result;
+            var success = true;
+            try
+            {
+                result = Evaluate(Query);
+            }
+            catch (Exception err)
+            {
+                result = err;
+                success = false;
+            }
+            return new Result(this, success, result);
         }
 
         /// <summary>
