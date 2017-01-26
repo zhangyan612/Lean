@@ -129,6 +129,7 @@
     <Compile Include="Brokerages\Tradier\TradierBrokerageHistoryProviderTests.cs" />
     <Compile Include="Brokerages\Tradier\TradierBrokerageSerializationTests.cs" />
     <Compile Include="Brokerages\Tradier\TradierBrokerageTests.cs" />
+    <Compile Include="Common\Commands\InspectorCommandTests.cs" />
     <Compile Include="Common\CurrenciesTests.cs" />
     <Compile Include="Common\Data\Market\QuoteBarTests.cs" />
     <Compile Include="Common\Data\UniverseSelection\FutureChainUniverseTests.cs" />
