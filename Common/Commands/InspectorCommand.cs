@@ -90,8 +90,13 @@ namespace QuantConnect.Commands
             var icc = c.CreateCompiler();
             var cp = new CompilerParameters();
 
+
             cp.ReferencedAssemblies.Add("System.dll");
-            if (OS.IsWindows) cp.ReferencedAssemblies.Add("System.Linq.dll");
+            cp.ReferencedAssemblies.Add("mscorlib.dll");
+            if (OS.IsWindows)
+            {
+                cp.ReferencedAssemblies.Add("System.Linq.dll");
+            }
             cp.ReferencedAssemblies.Add("QuantConnect.Common.dll");
             cp.ReferencedAssemblies.Add("QuantConnect.Algorithm.dll");
             cp.ReferencedAssemblies.Add("QuantConnect.Indicators.dll");
