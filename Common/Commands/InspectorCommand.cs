@@ -97,6 +97,10 @@ namespace QuantConnect.Commands
             {
                 cp.ReferencedAssemblies.Add("System.Linq.dll");
             }
+            else
+            {
+                cp.ReferencedAssemblies.Add("System.Core.dll");
+            }
             cp.ReferencedAssemblies.Add("QuantConnect.Common.dll");
             cp.ReferencedAssemblies.Add("QuantConnect.Algorithm.dll");
             cp.ReferencedAssemblies.Add("QuantConnect.Indicators.dll");
