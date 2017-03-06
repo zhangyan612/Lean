@@ -2163,6 +2163,12 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
         /// </remarks>
         private static bool ExistingSessionDetected()
         {
+            var ibControllerIni = Path.Combine(Config.Get("ib-controller-dir"), "IBController.ini");
+            foreach (var line in File.ReadAllLines(ibControllerIni))
+            {
+                if (line.StartsWith("ExistingSessionDetectedAction")) Log.Trace(line);
+            }
+
             // find the current IBController log file name
             var ibControllerLogPath = Path.Combine(Config.Get("ib-controller-dir"), "Logs");
             var files = Directory.GetFiles(ibControllerLogPath, "ibc-*.txt");
