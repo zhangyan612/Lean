@@ -2177,6 +2177,7 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
                     ibControllerLogFileName = file;
                 }
             }
+            Log.Trace("InteractiveBrokersBrokerage::ExistingSessionDetected(): LogFileName: " + ibControllerLogFileName);
 
             if (ibControllerLogFileName.IsNullOrEmpty())
             {
@@ -2185,6 +2186,14 @@ namespace QuantConnect.Brokerages.InteractiveBrokers
 
             // read the lines and find the message indicating the choice to leave the existing session running
             var lines = File.ReadAllLines(ibControllerLogFileName).ToList();
+
+            Log.Trace("InteractiveBrokersBrokerage::ExistingSessionDetected(): IBController log start");
+            foreach (var line in lines)
+            {
+                Log.Trace(line, true);
+            }
+            Log.Trace("InteractiveBrokersBrokerage::ExistingSessionDetected(): IBController log end");
+
             var separatorLine = new string('-', 60);
             var index = lines.FindLastIndex(x => x.Contains(separatorLine));
 
