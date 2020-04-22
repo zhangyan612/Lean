@@ -21,13 +21,22 @@ using QuantConnect.Indicators;
 namespace QuantConnect.Tests.Indicators
 {
     [TestFixture]
-    public class AverageTrueRangeTests
+    public class AverageTrueRangeTests : CommonIndicatorTests<IBaseDataBar>
     {
+        protected override IndicatorBase<IBaseDataBar> CreateIndicator()
+        {
+            return new AverageTrueRange(14);
+        }
+
+        protected override string TestFileName => "spy_atr_wilder.txt";
+
+        protected override string TestColumnName => "Average True Range 14";
+
         [Test]
         public void ComparesAgainstExternalData()
         {
-            var atr = new AverageTrueRange(14, MovingAverageType.Simple);
-            TestHelper.TestIndicator(atr, "spy_atr.txt", "Average True Range 14");
+            var atrSimple = new AverageTrueRange(14, MovingAverageType.Simple);
+            TestHelper.TestIndicator(atrSimple, "spy_atr.txt", "Average True Range 14");
         }
 
         [Test]

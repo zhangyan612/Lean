@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using QuantConnect.Configuration;
 using QuantConnect.Interfaces;
 using QuantConnect.Packets;
+using QuantConnect.Securities;
 using QuantConnect.Util;
 
 namespace QuantConnect.Brokerages.Oanda
@@ -30,7 +31,7 @@ namespace QuantConnect.Brokerages.Oanda
         /// <summary>
         /// Initializes a new instance of the <see cref="OandaBrokerageFactory"/> class.
         /// </summary>
-        public OandaBrokerageFactory() 
+        public OandaBrokerageFactory()
             : base(typeof(OandaBrokerage))
         {
         }
@@ -57,7 +58,8 @@ namespace QuantConnect.Brokerages.Oanda
                 {
                     { "oanda-environment", Config.Get("oanda-environment") },
                     { "oanda-access-token", Config.Get("oanda-access-token") },
-                    { "oanda-account-id", Config.Get("oanda-account-id") }
+                    { "oanda-account-id", Config.Get("oanda-account-id") },
+                    { "oanda-agent", Config.Get("oanda-agent", OandaRestApiBase.OandaAgentDefaultValue) }
                 };
             }
         }
@@ -65,10 +67,8 @@ namespace QuantConnect.Brokerages.Oanda
         /// <summary>
         /// Gets a new instance of the <see cref="OandaBrokerageModel"/>
         /// </summary>
-        public override IBrokerageModel BrokerageModel
-        {
-            get { return new OandaBrokerageModel(); }
-        }
+        /// <param name="orderProvider">The order provider</param>
+        public override IBrokerageModel GetBrokerageModel(IOrderProvider orderProvider) => new OandaBrokerageModel();
 
         /// <summary>
         /// Creates a new <see cref="IBrokerage"/> instance
@@ -84,6 +84,7 @@ namespace QuantConnect.Brokerages.Oanda
             var environment = Read<Environment>(job.BrokerageData, "oanda-environment", errors);
             var accessToken = Read<string>(job.BrokerageData, "oanda-access-token", errors);
             var accountId = Read<string>(job.BrokerageData, "oanda-account-id", errors);
+            var agent = Read<string>(job.BrokerageData, "oanda-agent", errors);
 
             if (errors.Count != 0)
             {
@@ -91,7 +92,7 @@ namespace QuantConnect.Brokerages.Oanda
                 throw new Exception(string.Join(System.Environment.NewLine, errors));
             }
 
-            var brokerage = new OandaBrokerage(algorithm.Transactions, algorithm.Portfolio, environment, accessToken, accountId);
+            var brokerage = new OandaBrokerage(algorithm.Transactions, algorithm.Portfolio, environment, accessToken, accountId, agent);
             Composer.Instance.AddPart<IDataQueueHandler>(brokerage);
 
             return brokerage;

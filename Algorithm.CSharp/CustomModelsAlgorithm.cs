@@ -1,11 +1,11 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using QuantConnect.Data.Market;
+using QuantConnect.Interfaces;
 using QuantConnect.Orders;
 using QuantConnect.Orders.Fees;
 using QuantConnect.Orders.Fills;
@@ -25,24 +26,30 @@ using QuantConnect.Securities;
 namespace QuantConnect.Algorithm.CSharp
 {
     /// <summary>
-    /// This algorithm shows how you can define your own custom models.
+    /// Demonstration of using custom fee, slippage and fill models for modelling transactions in backtesting.
+    /// QuantConnect allows you to model all orders as deeply and accurately as you need.
     /// </summary>
-    public class CustomModelsAlgorithm : QCAlgorithm
+    /// <meta name="tag" content="trading and orders" />
+    /// <meta name="tag" content="transaction fees and slippage" />
+    /// <meta name="tag" content="custom transaction models" />
+    /// <meta name="tag" content="custom slippage models" />
+    /// <meta name="tag" content="custom fee models" />
+    public class CustomModelsAlgorithm : QCAlgorithm, IRegressionAlgorithmDefinition
     {
         private Security _security;
-        private Symbol _spy = QuantConnect.Symbol.Create("SPY", SecurityType.Equity, Market.USA);
+        private Symbol _spy;
 
         public override void Initialize()
         {
-            SetStartDate(2012, 01, 01);
-            SetEndDate(2012, 02, 01);
-            AddSecurity(SecurityType.Equity, "SPY", Resolution.Hour);
+            SetStartDate(2013, 10, 01);
+            SetEndDate(2013, 10, 31);
+            _security = AddEquity("SPY", Resolution.Hour);
+            _spy = _security.Symbol;
 
             // set our models
-            _security = Securities[_spy];
-            _security.FeeModel = new CustomFeeModel(this);
-            _security.FillModel = new CustomFillModel(this);
-            _security.SlippageModel = new CustomSlippageModel(this);
+            _security.SetFeeModel(new CustomFeeModel(this));
+            _security.SetFillModel(new CustomFillModel(this));
+            _security.SetSlippageModel(new CustomSlippageModel(this));
         }
 
         public void OnData(TradeBars data)
@@ -108,7 +115,7 @@ namespace QuantConnect.Algorithm.CSharp
             }
         }
 
-        public class CustomFeeModel : IFeeModel
+        public class CustomFeeModel : FeeModel
         {
             private readonly QCAlgorithm _algorithm;
 
@@ -117,13 +124,15 @@ namespace QuantConnect.Algorithm.CSharp
                 _algorithm = algorithm;
             }
 
-            public decimal GetOrderFee(Security security, Order order)
+            public override OrderFee GetOrderFee(OrderFeeParameters parameters)
             {
                 // custom fee math
-                var fee = Math.Max(1m, security.Price*order.AbsoluteQuantity*0.00001m);
+                var fee = Math.Max(
+                    1m,
+                    parameters.Security.Price*parameters.Order.AbsoluteQuantity*0.00001m);
 
                 _algorithm.Log("CustomFeeModel: " + fee);
-                return fee;
+                return new OrderFee(new CashAmount(fee, "USD"));
             }
         }
 
@@ -145,5 +154,62 @@ namespace QuantConnect.Algorithm.CSharp
                 return slippage;
             }
         }
+
+        /// <summary>
+        /// This is used by the regression test system to indicate if the open source Lean repository has the required data to run this algorithm.
+        /// </summary>
+        public bool CanRunLocally { get; } = true;
+
+        /// <summary>
+        /// This is used by the regression test system to indicate which languages this algorithm is written in.
+        /// </summary>
+        public Language[] Languages { get; } = { Language.CSharp, Language.Python };
+
+        /// <summary>
+        /// This is used by the regression test system to indicate what the expected statistics are from running the algorithm
+        /// </summary>
+        public Dictionary<string, string> ExpectedStatistics => new Dictionary<string, string>
+        {
+            {"Total Trades", "62"},
+            {"Average Win", "0.10%"},
+            {"Average Loss", "-0.06%"},
+            {"Compounding Annual Return", "-7.727%"},
+            {"Drawdown", "2.400%"},
+            {"Expectancy", "-0.197"},
+            {"Net Profit", "-0.673%"},
+            {"Sharpe Ratio", "-1.565"},
+            {"Probabilistic Sharpe Ratio", "22.763%"},
+            {"Loss Rate", "70%"},
+            {"Win Rate", "30%"},
+            {"Profit-Loss Ratio", "1.70"},
+            {"Alpha", "-0.14"},
+            {"Beta", "0.124"},
+            {"Annual Standard Deviation", "0.047"},
+            {"Annual Variance", "0.002"},
+            {"Information Ratio", "-5.163"},
+            {"Tracking Error", "0.118"},
+            {"Treynor Ratio", "-0.591"},
+            {"Total Fees", "$62.24"},
+            {"Fitness Score", "0.147"},
+            {"Kelly Criterion Estimate", "0"},
+            {"Kelly Criterion Probability Value", "0"},
+            {"Sortino Ratio", "-2.792"},
+            {"Return Over Maximum Drawdown", "-3.569"},
+            {"Portfolio Turnover", "2.562"},
+            {"Total Insights Generated", "0"},
+            {"Total Insights Closed", "0"},
+            {"Total Insights Analysis Completed", "0"},
+            {"Long Insight Count", "0"},
+            {"Short Insight Count", "0"},
+            {"Long/Short Ratio", "100%"},
+            {"Estimated Monthly Alpha Value", "$0"},
+            {"Total Accumulated Estimated Alpha Value", "$0"},
+            {"Mean Population Estimated Insight Value", "$0"},
+            {"Mean Population Direction", "0%"},
+            {"Mean Population Magnitude", "0%"},
+            {"Rolling Averaged Population Direction", "0%"},
+            {"Rolling Averaged Population Magnitude", "0%"},
+            {"OrderListHash", "852026186"}
+        };
     }
 }

@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -14,13 +14,12 @@
 */
 
 using System;
-using System.Security.Cryptography;
-using System.Text;
+using System.Net;
 using Newtonsoft.Json;
 using QuantConnect.API;
+using QuantConnect.Configuration;
 using QuantConnect.Logging;
 using QuantConnect.Orders;
-using QuantConnect.Util;
 using RestSharp;
 using RestSharp.Authenticators;
 
@@ -48,8 +47,9 @@ namespace QuantConnect.Api
         public ApiConnection(int userId, string token)
         {
             _token = token;
-            _userId = userId.ToString();
-            Client = new RestClient("https://www.quantconnect.com/api/v2/");
+            _userId = userId.ToStringInvariant();
+            var apiUrl = Config.Get("cloud-api-url", "https://www.quantconnect.com/api/v2/");
+            Client = new RestClient(apiUrl);
         }
 
         /// <summary>
@@ -79,6 +79,8 @@ namespace QuantConnect.Api
         public bool TryRequest<T>(RestRequest request, out T result)
             where T : RestResponse
         {
+            var responseContent = string.Empty;
+
             try
             {
                 //Generate the hash each request
@@ -86,9 +88,10 @@ namespace QuantConnect.Api
                 // Timestamps older than 1800 seconds will not work.
                 var timestamp = (int)Time.TimeStamp();
                 var hash = Api.CreateSecureHash(timestamp, _token);
-                request.AddHeader("Timestamp", timestamp.ToString());
+                request.AddHeader("Timestamp", timestamp.ToStringInvariant());
+
                 Client.Authenticator = new HttpBasicAuthenticator(_userId, hash);
-                
+
                 // Execute the authenticated REST API Call
                 var restsharpResponse = Client.Execute(request);
 
@@ -99,16 +102,29 @@ namespace QuantConnect.Api
                 };
 
                 //Verify success
-                result = JsonConvert.DeserializeObject<T>(restsharpResponse.Content);
-                if (!result.Success)
+                if (restsharpResponse.ErrorException != null)
                 {
-                    //result;
+                    Log.Error($"ApiConnection.TryRequest({request.Resource}): Error: {restsharpResponse.ErrorException.Message}");
+                    result = null;
+                    return false;
+                }
+
+                if (!restsharpResponse.IsSuccessful)
+                {
+                    Log.Error($"ApiConnect.TryRequest(): Content: {restsharpResponse.Content}");
+                }
+
+                responseContent = restsharpResponse.Content;
+                result = JsonConvert.DeserializeObject<T>(responseContent);
+
+                if (result == null || !result.Success)
+                {
                     return false;
                 }
             }
             catch (Exception err)
             {
-                Log.Error(err, "Api.ApiConnection() Failed to make REST request.");
+                Log.Error($"ApiConnection.TryRequest({request.Resource}): Error: {err.Message}, Response content: {responseContent}");
                 result = null;
                 return false;
             }

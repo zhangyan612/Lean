@@ -1,11 +1,11 @@
 /*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -13,7 +13,6 @@
  * limitations under the License.
 */
 
-using System;
 using System.Collections.Generic;
 using QuantConnect.Orders;
 using QuantConnect.Orders.Fees;
@@ -21,6 +20,7 @@ using QuantConnect.Orders.Fills;
 using QuantConnect.Orders.Slippage;
 using QuantConnect.Securities;
 using QuantConnect.Util;
+using static QuantConnect.StringExtensions;
 
 namespace QuantConnect.Brokerages
 {
@@ -44,16 +44,13 @@ namespace QuantConnect.Brokerages
         /// <summary>
         /// Gets a map of the default markets to be used for each security type
         /// </summary>
-        public override IReadOnlyDictionary<SecurityType, string> DefaultMarkets
-        {
-            get { return DefaultMarketMap; }
-        }
+        public override IReadOnlyDictionary<SecurityType, string> DefaultMarkets => DefaultMarketMap;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="DefaultBrokerageModel"/> class
         /// </summary>
-        /// <param name="accountType">The type of account to be modelled, defaults to 
-        /// <see cref="QuantConnect.AccountType.Margin"/></param>
+        /// <param name="accountType">The type of account to be modelled, defaults to
+        /// <see cref="AccountType.Margin"/></param>
         public OandaBrokerageModel(AccountType accountType = AccountType.Margin)
             : base(accountType)
         {
@@ -78,8 +75,8 @@ namespace QuantConnect.Brokerages
             if (security.Type != SecurityType.Forex && security.Type != SecurityType.Cfd)
             {
                 message = new BrokerageMessageEvent(BrokerageMessageType.Warning, "NotSupported",
-                    "This model does not support " + security.Type + " security type."
-                    );
+                    Invariant($"The {nameof(OandaBrokerageModel)} does not support {security.Type} security type.")
+                );
 
                 return false;
             }
@@ -88,28 +85,23 @@ namespace QuantConnect.Brokerages
             if (order.Type != OrderType.Limit && order.Type != OrderType.Market && order.Type != OrderType.StopMarket)
             {
                 message = new BrokerageMessageEvent(BrokerageMessageType.Warning, "NotSupported",
-                    "This model does not support " + order.Type + " order type."
-                    );
+                    Invariant($"The {nameof(OandaBrokerageModel)} does not support {order.Type} order type.")
+                );
+
+                return false;
+            }
+
+            // validate time in force
+            if (order.TimeInForce != TimeInForce.GoodTilCanceled)
+            {
+                message = new BrokerageMessageEvent(BrokerageMessageType.Warning, "NotSupported",
+                    Invariant($"The {nameof(OandaBrokerageModel)} does not support {order.TimeInForce.GetType().Name} time in force.")
+                );
 
                 return false;
             }
 
             return true;
-        }
-
-        /// <summary>
-        /// Returns true if the brokerage would be able to execute this order at this time assuming
-        /// market prices are sufficient for the fill to take place. This is used to emulate the 
-        /// brokerage fills in backtesting and paper trading. For example some brokerages may not perform
-        /// executions during extended market hours. This is not intended to be checking whether or not
-        /// the exchange is open, that is handled in the Security.Exchange property.
-        /// </summary>
-        /// <param name="security">The security being traded</param>
-        /// <param name="order">The order to test for execution</param>
-        /// <returns>True if the brokerage would be able to perform the execution, false otherwise</returns>
-        public override bool CanExecuteOrder(Security security, Order order)
-        {
-            return order.DurationValue == DateTime.MaxValue || order.DurationValue <= order.Time.AddMonths(3);
         }
 
         /// <summary>
@@ -140,6 +132,18 @@ namespace QuantConnect.Brokerages
         public override ISlippageModel GetSlippageModel(Security security)
         {
             return new ConstantSlippageModel(0);
+        }
+
+        /// <summary>
+        /// Gets a new settlement model for the security
+        /// </summary>
+        /// <param name="security">The security to get a settlement model for</param>
+        /// <returns>The settlement model for this brokerage</returns>
+        public override ISettlementModel GetSettlementModel(Security security)
+        {
+            return security.Type == SecurityType.Cfd
+                ? new AccountCurrencyImmediateSettlementModel() :
+                (ISettlementModel)new ImmediateSettlementModel();
         }
     }
 }

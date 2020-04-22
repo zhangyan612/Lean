@@ -1,5 +1,21 @@
-﻿using System;
+﻿/*
+ * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
+ * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+*/
+
+using System;
 using System.Collections.Generic;
+using static QuantConnect.StringExtensions;
 
 namespace QuantConnect.Orders
 {
@@ -19,7 +35,7 @@ namespace QuantConnect.Orders
         /// <summary>
         /// Gets the new quantity of the order, null to not change the quantity
         /// </summary>
-        public int? Quantity { get; private set; }
+        public decimal? Quantity { get; private set; }
 
         /// <summary>
         /// Gets the new limit price of the order, null to not change the limit price
@@ -57,17 +73,18 @@ namespace QuantConnect.Orders
             var updates = new List<string>();
             if (Quantity.HasValue)
             {
-                updates.Add("Quantity: " + Quantity.Value);
+                updates.Add(Invariant($"Quantity: {Quantity.Value}"));
             }
             if (LimitPrice.HasValue)
             {
-                updates.Add("LimitPrice: " + LimitPrice.Value.SmartRounding());
+                updates.Add(Invariant($"LimitPrice: {LimitPrice.Value.SmartRounding()}"));
             }
             if (StopPrice.HasValue)
             {
-                updates.Add("StopPrice: " + StopPrice.Value.SmartRounding());
+                updates.Add(Invariant($"StopPrice: {StopPrice.Value.SmartRounding()}"));
             }
-            return string.Format("{0} UTC: Update Order: ({1}) - {2} {3} Status: {4}", Time, OrderId, string.Join(", ", updates), Tag, Status);
+
+            return Invariant($"{Time} UTC: Update Order: ({OrderId}) - {string.Join(", ", updates)} {Tag} Status: {Status}");
         }
     }
 }

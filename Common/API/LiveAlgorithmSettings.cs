@@ -1,8 +1,18 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿/*
+ * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
+ * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+*/
+
 using Newtonsoft.Json;
 using QuantConnect.Brokerages;
 
@@ -20,6 +30,7 @@ namespace QuantConnect.API
         /// <param name="compileId">Id of compilation of project from QuantConnect</param>
         /// <param name="serverType">Server type to run live Algorithm</param>
         /// <param name="settings"><see cref="BaseLiveAlgorithmSettings ">Live Algorithm Settings</see> for a specific brokerage</param>
+        /// <param name="version">The version identifier</param>
         public LiveAlgorithmApiSettingsWrapper(int projectId, string compileId, string serverType, BaseLiveAlgorithmSettings settings, string version = "-1")
         {
             VersionId = version;
@@ -30,7 +41,7 @@ namespace QuantConnect.API
         }
 
         /// <summary>
-        /// -1 is master 
+        /// -1 is master
         /// </summary>
         [JsonProperty(PropertyName = "versionId")]
         public string VersionId { get; set; }
@@ -169,7 +180,7 @@ namespace QuantConnect.API
                                                 string account)
             : base(user, password, environment, account)
         {
-            Id = BrokerageName.Default.ToString();
+            Id = BrokerageName.QuantConnectBrokerage.ToStringInvariant();
         }
     }
 
@@ -192,7 +203,7 @@ namespace QuantConnect.API
                                          string account)
             : base(user, password, environment, account)
         {
-            Id = BrokerageName.FxcmBrokerage.ToString();
+            Id = BrokerageName.FxcmBrokerage.ToStringInvariant();
         }
 
     }
@@ -215,7 +226,7 @@ namespace QuantConnect.API
         {
             Account = account;
             Environment = Account.Substring(0, 2) == "DU" ? BrokerageEnvironment.Paper : BrokerageEnvironment.Live;
-            Id = BrokerageName.InteractiveBrokersBrokerage.ToString();
+            Id = BrokerageName.InteractiveBrokersBrokerage.ToStringInvariant();
         }
     }
 
@@ -239,7 +250,7 @@ namespace QuantConnect.API
             // The DateIssued parameter is required by the Api, but not required to trade.
             // This should be fixed on the Api side.
             DateIssued = "1";
-            Id = BrokerageName.OandaBrokerage.ToString();
+            Id = BrokerageName.OandaBrokerage.ToStringInvariant();
         }
 
         /// <summary>

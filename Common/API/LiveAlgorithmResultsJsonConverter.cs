@@ -1,10 +1,26 @@
-﻿using System;
+﻿/*
+ * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
+ * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+*/
+
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using QuantConnect.Orders;
 using QuantConnect.Packets;
+using QuantConnect.Securities;
 
 namespace QuantConnect.API
 {
@@ -77,7 +93,7 @@ namespace QuantConnect.API
             var success = jObject["success"].Value<bool>();
             if (!success)
             {
-                // Either there was an error in the running algrithm or the algorithm hasn't started 
+                // Either there was an error in the running algrithm or the algorithm hasn't started
                 liveAlgoResults.Errors = jObject.Last.Children().Select(error => error.ToString()).ToList();
                 return liveAlgoResults;
             }
@@ -107,18 +123,21 @@ namespace QuantConnect.API
             }
 
             // Live Results - At this time only that charting data can be returned from the api (9/30/2016)
-            liveAlgoResults.LiveResults.Results = new LiveResult(chartDictionary, 
-                                                                 new Dictionary < int, Order >(), 
-                                                                 new Dictionary < DateTime, decimal >(), 
-                                                                 new Dictionary < string, Holding > (), 
-                                                                 new Dictionary < string, string > (), 
-                                                                 new Dictionary < string, string >());
+            liveAlgoResults.LiveResults.Results = new LiveResult(new LiveResultParameters(chartDictionary,
+                new Dictionary<int, Order>(),
+                new Dictionary<DateTime, decimal>(),
+                new Dictionary<string, Holding>(),
+                new CashBook(),
+                new Dictionary<string, string>(),
+                new Dictionary<string, string>(),
+                new List<OrderEvent>())
+            );
 
             return liveAlgoResults;
         }
 
         /// <summary>
-        /// Get series data for a specific chart 
+        /// Get series data for a specific chart
         /// </summary>
         /// <param name="series">Series data and properties for a chart</param>
         /// <returns>Dictionary with the name of the series as the key and the Series itself as the value</returns>

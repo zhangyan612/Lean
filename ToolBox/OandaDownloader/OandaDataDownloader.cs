@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -38,7 +38,11 @@ namespace QuantConnect.ToolBox.OandaDownloader
         public OandaDataDownloader(string accessToken, string accountId)
         {
             // Set Oanda account credentials
-            _brokerage = new OandaBrokerage(null, null, Environment.Practice, accessToken, accountId);
+            _brokerage = new OandaBrokerage(null,
+                null,
+                Environment.Practice,
+                accessToken,
+                accountId);
         }
 
         /// <summary>
@@ -83,8 +87,8 @@ namespace QuantConnect.ToolBox.OandaDownloader
             if (endUtc < startUtc)
                 throw new ArgumentException("The end date must be greater or equal than the start date.");
 
-            var barsTotalInPeriod = new List<TradeBar>();
-            var barsToSave = new List<TradeBar>();
+            var barsTotalInPeriod = new List<QuoteBar>();
+            var barsToSave = new List<QuoteBar>();
 
             // set the starting date/time
             var date = startUtc;
@@ -94,7 +98,7 @@ namespace QuantConnect.ToolBox.OandaDownloader
             while (startDateTime <= endUtc.AddDays(1))
             {
                 // request blocks of 5-second bars with a starting date/time
-                var bars = _brokerage.DownloadTradeBars(symbol, startDateTime, endUtc.AddDays(1), Resolution.Second, DateTimeZone.Utc).ToList();
+                var bars = _brokerage.DownloadQuoteBars(symbol, startDateTime, endUtc.AddDays(1), Resolution.Second, DateTimeZone.Utc).ToList();
                 if (bars.Count == 0)
                     break;
 
@@ -115,7 +119,7 @@ namespace QuantConnect.ToolBox.OandaDownloader
 
                         barsToSave.Clear();
 
-                        // remove the completed date 
+                        // remove the completed date
                         groupedBars.Remove(currentDate);
                     }
 
@@ -169,21 +173,31 @@ namespace QuantConnect.ToolBox.OandaDownloader
         /// <param name="bars"></param>
         /// <param name="resolution"></param>
         /// <returns></returns>
-        private static IEnumerable<TradeBar> AggregateBars(Symbol symbol, IEnumerable<TradeBar> bars, TimeSpan resolution)
+        internal IEnumerable<QuoteBar> AggregateBars(Symbol symbol, IEnumerable<QuoteBar> bars, TimeSpan resolution)
         {
             return
                 (from b in bars
                  group b by b.Time.RoundDown(resolution)
                      into g
-                     select new TradeBar
+                 select new QuoteBar
+                 {
+                     Symbol = symbol,
+                     Time = g.Key,
+                     Bid = new Bar
                      {
-                         Symbol = symbol,
-                         Time = g.Key,
-                         Open = g.First().Open,
-                         High = g.Max(b => b.High),
-                         Low = g.Min(b => b.Low),
-                         Close = g.Last().Close
-                     });
+                         Open = g.First().Bid.Open,
+                         High = g.Max(b => b.Bid.High),
+                         Low = g.Min(b => b.Bid.Low),
+                         Close = g.Last().Bid.Close
+                     },
+                     Ask = new Bar
+                     {
+                         Open = g.First().Ask.Open,
+                         High = g.Max(b => b.Ask.High),
+                         Low = g.Min(b => b.Ask.Low),
+                         Close = g.Last().Ask.Close
+                     }
+                 });
         }
 
         /// <summary>
@@ -191,16 +205,16 @@ namespace QuantConnect.ToolBox.OandaDownloader
         /// </summary>
         /// <param name="bars"></param>
         /// <returns></returns>
-        private static SortedDictionary<DateTime, List<TradeBar>> GroupBarsByDate(IEnumerable<TradeBar> bars)
+        private static SortedDictionary<DateTime, List<QuoteBar>> GroupBarsByDate(IEnumerable<QuoteBar> bars)
         {
-            var groupedBars = new SortedDictionary<DateTime, List<TradeBar>>();
+            var groupedBars = new SortedDictionary<DateTime, List<QuoteBar>>();
 
             foreach (var bar in bars)
             {
                 var date = bar.Time.Date;
 
                 if (!groupedBars.ContainsKey(date))
-                    groupedBars[date] = new List<TradeBar>();
+                    groupedBars[date] = new List<QuoteBar>();
 
                 groupedBars[date].Add(bar);
             }

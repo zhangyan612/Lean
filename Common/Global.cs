@@ -19,8 +19,7 @@ using System.Runtime.Serialization;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using QuantConnect.Securities;
-using QuantConnect.Securities.Cfd;
-using QuantConnect.Securities.Forex;
+using static QuantConnect.StringExtensions;
 
 namespace QuantConnect
 {
@@ -36,7 +35,7 @@ namespace QuantConnect
         /// Daily and hourly time format
         public const string TwelveCharacter = "yyyyMMdd HH:mm";
         /// JSON Format Date Representation
-        public static string JsonFormat = "yyyy-MM-ddThh:mm:ss";
+        public static string JsonFormat = "yyyy-MM-ddTHH:mm:ss";
         /// MySQL Format Date Representation
         public const string DB = "yyyy-MM-dd HH:mm:ss";
         /// QuantConnect UX Date Representation
@@ -65,28 +64,33 @@ namespace QuantConnect
         public string CurrencySymbol;
 
         /// Average Price of our Holding in the currency the symbol is traded in
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
         public decimal AveragePrice;
 
         /// Quantity of Symbol We Hold.
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
         public decimal Quantity;
 
         /// Current Market Price of the Asset in the currency the symbol is traded in
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
         public decimal MarketPrice;
 
         /// Current market conversion rate into the account currency
-        public decimal ConversionRate;
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public decimal? ConversionRate;
 
-        /// Current market value of the holding 
+        /// Current market value of the holding
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
         public decimal MarketValue;
 
-        /// Current unrealized P/L of the holding 
+        /// Current unrealized P/L of the holding
+        [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)]
         public decimal UnrealizedPnL;
 
         /// Create a new default holding:
         public Holding()
         {
             CurrencySymbol = "$";
-            ConversionRate = 1m;
         }
 
         /// <summary>
@@ -110,6 +114,12 @@ namespace QuantConnect
             {
                 rounding = 5;
             }
+            //do not round crypto
+            else if (holding.Type == SecurityType.Crypto)
+            {
+                rounding = 28;
+            }
+
 
             AveragePrice = Math.Round(holding.AveragePrice, rounding);
             MarketPrice = Math.Round(holding.Price, rounding);
@@ -141,26 +151,17 @@ namespace QuantConnect
         /// </summary>
         public override string ToString()
         {
-            if (ConversionRate == 1.0m)
-            {
-                return string.Format("{0}: {1} @ {2}{3} - Market: {2}{4}", Symbol, Quantity, CurrencySymbol, AveragePrice, MarketPrice);
-            }
-            return string.Format("{0}: {1} @ {2}{3} - Market: {2}{4} - Conversion: {5}", Symbol, Quantity, CurrencySymbol, AveragePrice, MarketPrice, ConversionRate);
-        }
-    }
+            var value = Invariant($"{Symbol.Value}: {Quantity} @ ") +
+                        Invariant($"{CurrencySymbol}{AveragePrice} - ") +
+                        Invariant($"Market: {CurrencySymbol}{MarketPrice}");
 
-    /// <summary>
-    /// Processing runmode of the backtest.
-    /// </summary>
-    /// <obsolete>The runmode enum is now obsolete and all tasks are run in series mode. This was done to ensure algorithms have memory of the day before.</obsolete>
-    public enum RunMode
-    {
-        /// Automatically detect the runmode of the algorithm: series for minute data, parallel for second-tick
-        Automatic,
-        /// Series runmode for the algorithm
-        Series,
-        /// Parallel runmode for the algorithm
-        Parallel
+            if (ConversionRate != 1m)
+            {
+                value += Invariant($" - Conversion: {ConversionRate}");
+            }
+
+            return value;
+        }
     }
 
     /// <summary>
@@ -233,7 +234,12 @@ namespace QuantConnect
         /// <summary>
         /// Hobbyist User with Included 512mb Server.
         /// </summary>
-        Hobbyist
+        Hobbyist,
+
+        /// <summary>
+        /// Professional plan for financial advisors
+        /// </summary>
+        Professional
     }
 
 
@@ -297,7 +303,12 @@ namespace QuantConnect
         /// <summary>
         /// Contract For a Difference Security Type.
         /// </summary>
-        Cfd
+        Cfd,
+
+        /// <summary>
+        /// Cryptocurrency Security Type.
+        /// </summary>
+        Crypto
     }
 
     /// <summary>
@@ -365,7 +376,7 @@ namespace QuantConnect
     }
 
     /// <summary>
-    /// Types of tick data 
+    /// Types of tick data
     /// </summary>
     /// <remarks>QuantConnect currently only has trade, quote, open interest tick data.</remarks>
     public enum TickType
@@ -373,7 +384,7 @@ namespace QuantConnect
         /// Trade type tick object.
         Trade,
         /// Quote type tick object.
-        Quote, 
+        Quote,
         /// Open Interest type tick object (for options, futures)
         OpenInterest
     }
@@ -392,6 +403,22 @@ namespace QuantConnect
         /// Specifies the symbol has been delisted
         /// </summary>
         Delisted = 1
+    }
+
+    /// <summary>
+    /// Specifies the type of <see cref="QuantConnect.Data.Market.Split"/> data
+    /// </summary>
+    public enum SplitType
+    {
+        /// <summary>
+        /// Specifies a warning of an imminent split event
+        /// </summary>
+        Warning = 0,
+
+        /// <summary>
+        /// Specifies the symbol has been split
+        /// </summary>
+        SplitOccurred = 1
     }
 
     /// <summary>
@@ -445,15 +472,15 @@ namespace QuantConnect
     }
 
     /// <summary>
-    /// Specifies the type of settlement in derivative deals 
+    /// Specifies the type of settlement in derivative deals
     /// </summary>
     public enum SettlementType
     {
         /// <summary>
-        /// Physical delivery of the underlying security 
+        /// Physical delivery of the underlying security
         /// </summary>
-        PhysicalDelivery, 
-        
+        PhysicalDelivery,
+
         /// <summary>
         /// Cash is paid/received on settlement
         /// </summary>
@@ -471,10 +498,16 @@ namespace QuantConnect
         public AlgorithmControl()
         {
             // default to true, API can override
+            Initialized = false;
             HasSubscribers = true;
             Status = AlgorithmStatus.Running;
             ChartSubscription = "Strategy Equity";
         }
+
+        /// <summary>
+        /// Register this control packet as not defaults.
+        /// </summary>
+        public bool Initialized;
 
         /// <summary>
         /// Current run status of the algorithm id.
@@ -541,7 +574,12 @@ namespace QuantConnect
         /// <summary>
         /// The subscription's data comes from a rest call that is polled and returns a single line/data point of information
         /// </summary>
-        Rest
+        Rest,
+
+        /// <summary>
+        /// The subscription's data is streamed
+        /// </summary>
+        Streaming
     }
 
     /// <summary>
@@ -927,7 +965,7 @@ namespace QuantConnect
             new DateTime(2018, 12, 25),
             new DateTime(2019, 12, 25),
             new DateTime(2020, 12, 25),
-            new DateTime(2021, 12, 25),
+            new DateTime(2021, 12, 24),
             new DateTime(2022, 12, 26),
             new DateTime(2023, 12, 25)
         };

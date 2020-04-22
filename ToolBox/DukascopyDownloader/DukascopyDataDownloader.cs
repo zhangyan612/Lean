@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -112,21 +112,31 @@ namespace QuantConnect.ToolBox.DukascopyDownloader
         /// <param name="ticks"></param>
         /// <param name="resolution"></param>
         /// <returns></returns>
-        internal static IEnumerable<TradeBar> AggregateTicks(Symbol symbol, IEnumerable<Tick> ticks, TimeSpan resolution)
+        internal static IEnumerable<QuoteBar> AggregateTicks(Symbol symbol, IEnumerable<Tick> ticks, TimeSpan resolution)
         {
-            return 
-                (from t in ticks
-                 group t by t.Time.RoundDown(resolution)
-                     into g
-                     select new TradeBar
-                     {
-                         Symbol = symbol,
-                         Time = g.Key,
-                         Open = g.First().LastPrice,
-                         High = g.Max(t => t.LastPrice),
-                         Low = g.Min(t => t.LastPrice),
-                         Close = g.Last().LastPrice
-                     });
+            return
+                from t in ticks
+                group t by t.Time.RoundDown(resolution)
+                into g
+                select new QuoteBar
+                {
+                    Symbol = symbol,
+                    Time = g.Key,
+                    Bid = new Bar
+                    {
+                        Open = g.First().BidPrice,
+                        High = g.Max(b => b.BidPrice),
+                        Low = g.Min(b => b.BidPrice),
+                        Close = g.Last().BidPrice
+                    },
+                    Ask = new Bar
+                    {
+                        Open = g.First().AskPrice,
+                        High = g.Max(b => b.AskPrice),
+                        Low = g.Min(b => b.AskPrice),
+                        Close = g.Last().AskPrice
+                    }
+                };
         }
 
         /// <summary>
@@ -144,8 +154,9 @@ namespace QuantConnect.ToolBox.DukascopyDownloader
             {
                 var timeOffset = hour * 3600000;
 
-                var url = string.Format(@"http://www.dukascopy.com/datafeed/{0}/{1:D4}/{2:D2}/{3:D2}/{4:D2}h_ticks.bi5",
-                    dukascopySymbol, date.Year, date.Month - 1, date.Day, hour);
+                var url = $"http://www.dukascopy.com/datafeed/{dukascopySymbol}/" +
+                          $"{date.Year.ToStringInvariant("D4")}/{(date.Month - 1).ToStringInvariant("D2")}/" +
+                          $"{date.Day.ToStringInvariant("D2")}/{hour.ToStringInvariant("D2")}h_ticks.bi5";
 
                 using (var client = new WebClient())
                 {
@@ -189,7 +200,7 @@ namespace QuantConnect.ToolBox.DukascopyDownloader
                 {
                     SevenZipExtractor.DecompressStream(inStream, outStream, (int)inStream.Length, null);
 
-                    byte[] bytes = outStream.GetBuffer();
+                    byte[] bytes = outStream.ToArray();
                     int count = bytes.Length / DukascopyTickLength;
 
                     // Numbers are big-endian
@@ -213,9 +224,9 @@ namespace QuantConnect.ToolBox.DukascopyDownloader
                             if (bid > 0 && ask > 0)
                             {
                                 ticks.Add(new Tick(
-                                    date.AddMilliseconds(timeOffset + time), 
-                                    symbol, 
-                                    Convert.ToDecimal(bid / pointValue), 
+                                    date.AddMilliseconds(timeOffset + time),
+                                    symbol,
+                                    Convert.ToDecimal(bid / pointValue),
                                     Convert.ToDecimal(ask / pointValue)));
                             }
                         }

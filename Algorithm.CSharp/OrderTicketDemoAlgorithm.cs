@@ -1,12 +1,12 @@
-﻿
+
 /*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Generic;
 using QuantConnect.Data;
+using QuantConnect.Interfaces;
 using QuantConnect.Orders;
 
 namespace QuantConnect.Algorithm.CSharp
@@ -24,11 +25,16 @@ namespace QuantConnect.Algorithm.CSharp
     /// <summary>
     /// In this algorithm we submit/update/cancel each order type
     /// </summary>
-    public class OrderTicketDemoAlgorithm : QCAlgorithm
+    /// <meta name="tag" content="trading and orders" />
+    /// <meta name="tag" content="placing orders" />
+    /// <meta name="tag" content="managing orders" />
+    /// <meta name="tag" content="order tickets" />
+    /// <meta name="tag" content="updating orders" />
+    public class OrderTicketDemoAlgorithm : QCAlgorithm, IRegressionAlgorithmDefinition
     {
-        private const string Symbol = "SPY";
-        private readonly List<OrderTicket> _openMarketOnOpenOrders = new List<OrderTicket>(); 
-        private readonly List<OrderTicket> _openMarketOnCloseOrders = new List<OrderTicket>(); 
+        private const string symbol = "SPY";
+        private readonly List<OrderTicket> _openMarketOnOpenOrders = new List<OrderTicket>();
+        private readonly List<OrderTicket> _openMarketOnCloseOrders = new List<OrderTicket>();
         private readonly List<OrderTicket> _openLimitOrders = new List<OrderTicket>();
         private readonly List<OrderTicket> _openStopMarketOrders = new List<OrderTicket>();
         private readonly List<OrderTicket> _openStopLimitOrders = new List<OrderTicket>();
@@ -42,7 +48,7 @@ namespace QuantConnect.Algorithm.CSharp
             SetEndDate(2013, 10, 11);    //Set End Date
             SetCash(100000);             //Set Strategy Cash
             // Find more symbols here: http://quantconnect.com/data
-            AddSecurity(SecurityType.Equity, Symbol, Resolution.Minute);
+            AddSecurity(SecurityType.Equity, symbol, Resolution.Minute);
         }
 
         /// <summary>
@@ -77,8 +83,8 @@ namespace QuantConnect.Algorithm.CSharp
         }
 
         /// <summary>
-        /// MarketOrders are the only orders that are processed synchronously by default, so 
-        /// they'll fill by the next line of code. This behavior equally applies to live mode. 
+        /// MarketOrders are the only orders that are processed synchronously by default, so
+        /// they'll fill by the next line of code. This behavior equally applies to live mode.
         /// You can opt out of this behavior by specifying the 'asynchronous' parameter as true.
         /// </summary>
         private void MarketOrders()
@@ -89,7 +95,7 @@ namespace QuantConnect.Algorithm.CSharp
 
                 // submit a market order to buy 10 shares, this function returns an OrderTicket object
                 // we submit the order with asynchronous:false, so it block until it is filled
-                var newTicket = MarketOrder(Symbol, 10, asynchronous: false);
+                var newTicket = MarketOrder(symbol, 10, asynchronous: false);
                 if (newTicket.Status != OrderStatus.Filled)
                 {
                     Log("Synchronous market order was not filled synchronously!");
@@ -100,7 +106,7 @@ namespace QuantConnect.Algorithm.CSharp
                 // the fill before the next time events for your algorithm. here we'll submit the order
                 // asynchronously and try to cancel it, sometimes it will, sometimes it will be filled
                 // first.
-                newTicket = MarketOrder(Symbol, 10, asynchronous: true);
+                newTicket = MarketOrder(symbol, 10, asynchronous: true);
                 var response = newTicket.Cancel("Attempt to cancel async order");
                 if (response.IsSuccess)
                 {
@@ -120,8 +126,8 @@ namespace QuantConnect.Algorithm.CSharp
         /// a limit price below the current market price. Likewise the opposite is true
         /// when selling, you can place a LimitOrder to sell with a limit price above the
         /// current market price to get a better sale price.
-        /// You can submit requests to update or cancel the LimitOrder at any time. 
-        /// The 'LimitPrice' for an order can be retrieved from the ticket using the 
+        /// You can submit requests to update or cancel the LimitOrder at any time.
+        /// The 'LimitPrice' for an order can be retrieved from the ticket using the
         /// OrderTicket.Get(OrderField) method, for example:
         /// <code>
         /// var currentLimitPrice = orderTicket.Get(OrderField.LimitPrice);
@@ -134,12 +140,12 @@ namespace QuantConnect.Algorithm.CSharp
                 Log("Submitting LimitOrder");
 
                 // submit a limit order to buy 10 shares at .1% below the bar's close
-                var close = Securities[Symbol].Close;
-                var newTicket = LimitOrder(Symbol, 10, close * .999m);
+                var close = Securities[symbol].Close;
+                var newTicket = LimitOrder(symbol, 10, close * .999m);
                 _openLimitOrders.Add(newTicket);
 
                 // submit another limit order to sell 10 shares at .1% above the bar's close
-                newTicket = LimitOrder(Symbol, 10, close * 1.001m);
+                newTicket = LimitOrder(symbol, -10, close * 1.001m);
                 _openLimitOrders.Add(newTicket);
             }
 
@@ -162,12 +168,12 @@ namespace QuantConnect.Algorithm.CSharp
 
                 var newLongLimit = longOrder.Get(OrderField.LimitPrice) + 0.01m;
                 var newShortLimit = shortOrder.Get(OrderField.LimitPrice) - 0.01m;
-                Log("Updating limits - Long: " + newLongLimit.ToString("0.00") + " Short: " + newShortLimit.ToString("0.00"));
+                Log($"Updating limits - Long: {newLongLimit.ToStringInvariant("0.00")} Short: {newShortLimit.ToStringInvariant("0.00")}");
 
                 longOrder.Update(new UpdateOrderFields
                 {
                     // we could change the quantity, but need to specify it
-                    //Quantity = 
+                    //Quantity =
                     LimitPrice = newLongLimit,
                     Tag = "Update #" + (longOrder.UpdateRequests.Count + 1)
                 });
@@ -185,8 +191,8 @@ namespace QuantConnect.Algorithm.CSharp
         /// market price. In this way it's a 'stop loss' for a short trade.
         /// When placing a short trade, the stop price must be below current
         /// market price. In this way it's a 'stop loss' for a long trade.
-        /// You can submit requests to update or cancel the StopMarketOrder at any time. 
-        /// The 'StopPrice' for an order can be retrieved from the ticket using the 
+        /// You can submit requests to update or cancel the StopMarketOrder at any time.
+        /// The 'StopPrice' for an order can be retrieved from the ticket using the
         /// OrderTicket.Get(OrderField) method, for example:
         /// <code>
         /// var currentStopPrice = orderTicket.Get(OrderField.StopPrice);
@@ -201,16 +207,16 @@ namespace QuantConnect.Algorithm.CSharp
                 // a long stop is triggered when the price rises above the value
                 // so we'll set a long stop .25% above the current bar's close
 
-                var close = Securities[Symbol].Close;
+                var close = Securities[symbol].Close;
                 var stopPrice = close * 1.0025m;
-                var newTicket = StopMarketOrder(Symbol, 10, stopPrice);
+                var newTicket = StopMarketOrder(symbol, 10, stopPrice);
                 _openStopMarketOrders.Add(newTicket);
 
                 // a short stop is triggered when the price falls below the value
                 // so we'll set a short stop .25% below the current bar's close
 
                 stopPrice = close * .9975m;
-                newTicket = StopMarketOrder(Symbol, -10, stopPrice);
+                newTicket = StopMarketOrder(symbol, -10, stopPrice);
                 _openStopMarketOrders.Add(newTicket);
             }
 
@@ -231,12 +237,12 @@ namespace QuantConnect.Algorithm.CSharp
 
                 var newLongStop = longOrder.Get(OrderField.StopPrice) - 0.01m;
                 var newShortStop = shortOrder.Get(OrderField.StopPrice) + 0.01m;
-                Log("Updating stops - Long: " + newLongStop.ToString("0.00") + " Short: " + newShortStop.ToString("0.00"));
+                Log($"Updating stops - Long: {newLongStop.ToStringInvariant("0.00")} Short: {newShortStop.ToStringInvariant("0.00")}");
 
                 longOrder.Update(new UpdateOrderFields
                 {
                     // we could change the quantity, but need to specify it
-                    //Quantity = 
+                    //Quantity =
                     StopPrice = newLongStop,
                     Tag = "Update #" + (longOrder.UpdateRequests.Count + 1)
                 });
@@ -276,10 +282,10 @@ namespace QuantConnect.Algorithm.CSharp
                 // to get at least the limit price for our fills, so make the limit
                 // price a little softer than the stop price
 
-                var close = Securities[Symbol].Close;
+                var close = Securities[symbol].Close;
                 var stopPrice = close * 1.001m;
                 var limitPrice = close - 0.03m;
-                var newTicket = StopLimitOrder(Symbol, 10, stopPrice, limitPrice);
+                var newTicket = StopLimitOrder(symbol, 10, stopPrice, limitPrice);
                 _openStopLimitOrders.Add(newTicket);
 
                 // a short stop is triggered when the price falls below the value
@@ -290,7 +296,7 @@ namespace QuantConnect.Algorithm.CSharp
 
                 stopPrice = close * .999m;
                 limitPrice = close + 0.03m;
-                newTicket = StopLimitOrder(Symbol, -10, stopPrice, limitPrice);
+                newTicket = StopLimitOrder(symbol, -10, stopPrice, limitPrice);
                 _openStopLimitOrders.Add(newTicket);
             }
 
@@ -313,13 +319,13 @@ namespace QuantConnect.Algorithm.CSharp
                 var newLongLimit = longOrder.Get(OrderField.LimitPrice) + 0.01m;
                 var newShortStop = shortOrder.Get(OrderField.StopPrice) + 0.01m;
                 var newShortLimit = shortOrder.Get(OrderField.LimitPrice) - 0.01m;
-                Log("Updating stops  - Long: " + newLongStop.ToString("0.00") + " Short: " + newShortStop.ToString("0.00"));
-                Log("Updating limits - Long: " + newLongLimit.ToString("0.00") + " Short: " + newShortLimit.ToString("0.00"));
+                Log($"Updating stops  - Long: {newLongStop.ToStringInvariant("0.00")} Short: {newShortStop.ToStringInvariant("0.00")}");
+                Log($"Updating limits - Long: {newLongLimit.ToStringInvariant("0.00")} Short: {newShortLimit.ToStringInvariant("0.00")}");
 
                 longOrder.Update(new UpdateOrderFields
                 {
                     // we could change the quantity, but need to specify it
-                    //Quantity = 
+                    //Quantity =
                     StopPrice = newLongStop,
                     LimitPrice = newLongLimit,
                     Tag = "Update #" + (longOrder.UpdateRequests.Count + 1)
@@ -345,10 +351,10 @@ namespace QuantConnect.Algorithm.CSharp
                 Log("Submitting MarketOnCloseOrder");
 
                 // open a new position or triple our existing position
-                var qty = Portfolio[Symbol].Quantity;
+                var qty = Portfolio[symbol].Quantity;
                 qty = qty == 0 ? 100 : 2*qty;
 
-                var newTicket = MarketOnCloseOrder(Symbol, qty);
+                var newTicket = MarketOnCloseOrder(symbol, qty);
                 _openMarketOnCloseOrders.Add(newTicket);
             }
 
@@ -377,7 +383,7 @@ namespace QuantConnect.Algorithm.CSharp
             {
                 Log("Submitting MarketOnCloseOrder to liquidate end of algorithm");
 
-                MarketOnCloseOrder(Symbol, -Portfolio[Symbol].Quantity, "Liquidate end of algorithm");
+                MarketOnCloseOrder(symbol, -Portfolio[symbol].Quantity, "Liquidate end of algorithm");
             }
         }
 
@@ -393,7 +399,7 @@ namespace QuantConnect.Algorithm.CSharp
                 Log("Submitting MarketOnOpenOrder");
 
                 // its EOD, let's submit a market on open order to short even more!
-                var newTicket = MarketOnOpenOrder(Symbol, 50);
+                var newTicket = MarketOnOpenOrder(symbol, 50);
                 _openMarketOnOpenOrders.Add(newTicket);
             }
 
@@ -407,7 +413,7 @@ namespace QuantConnect.Algorithm.CSharp
                     _openMarketOnOpenOrders.Clear();
                     return;
                 }
-                
+
                 var quantity = ticket.Quantity + 1;
                 Log("Updating quantity  - New Quantity: " + quantity);
 
@@ -418,13 +424,31 @@ namespace QuantConnect.Algorithm.CSharp
                     Tag = "Update #" + (ticket.UpdateRequests.Count + 1)
                 });
             }
-            
+
         }
 
         public override void OnOrderEvent(OrderEvent orderEvent)
         {
             var order = Transactions.GetOrderById(orderEvent.OrderId);
             Console.WriteLine("{0}: {1}: {2}", Time, order.Type, orderEvent);
+
+            if (orderEvent.Quantity == 0)
+            {
+                throw new Exception("OrderEvent quantity is Not expected to be 0, it should hold the current order Quantity");
+            }
+            if (orderEvent.Quantity != order.Quantity)
+            {
+                throw new Exception("OrderEvent quantity should hold the current order Quantity");
+            }
+            if (order is LimitOrder && orderEvent.LimitPrice == 0
+                || order is StopLimitOrder && orderEvent.LimitPrice == 0)
+            {
+                throw new Exception("OrderEvent LimitPrice is Not expected to be 0 for LimitOrder and StopLimitOrder");
+            }
+            if (order is StopMarketOrder && orderEvent.StopPrice == 0)
+            {
+                throw new Exception("OrderEvent StopPrice is Not expected to be 0 for StopMarketOrder");
+            }
         }
 
         private bool CheckPairOrdersForFills(OrderTicket longOrder, OrderTicket shortOrder)
@@ -448,5 +472,62 @@ namespace QuantConnect.Algorithm.CSharp
         {
             return Time.Day == day && Time.Hour == hour && Time.Minute == minute;
         }
+
+        /// <summary>
+        /// This is used by the regression test system to indicate if the open source Lean repository has the required data to run this algorithm.
+        /// </summary>
+        public bool CanRunLocally { get; } = true;
+
+        /// <summary>
+        /// This is used by the regression test system to indicate which languages this algorithm is written in.
+        /// </summary>
+        public Language[] Languages { get; } = { Language.CSharp, Language.Python };
+
+        /// <summary>
+        /// This is used by the regression test system to indicate what the expected statistics are from running the algorithm
+        /// </summary>
+        public Dictionary<string, string> ExpectedStatistics => new Dictionary<string, string>
+        {
+            {"Total Trades", "8"},
+            {"Average Win", "0%"},
+            {"Average Loss", "-0.01%"},
+            {"Compounding Annual Return", "97.900%"},
+            {"Drawdown", "0.100%"},
+            {"Expectancy", "-1"},
+            {"Net Profit", "0.877%"},
+            {"Sharpe Ratio", "13.295"},
+            {"Probabilistic Sharpe Ratio", "99.183%"},
+            {"Loss Rate", "100%"},
+            {"Win Rate", "0%"},
+            {"Profit-Loss Ratio", "0"},
+            {"Alpha", "0.284"},
+            {"Beta", "0.24"},
+            {"Annual Standard Deviation", "0.056"},
+            {"Annual Variance", "0.003"},
+            {"Information Ratio", "-7.021"},
+            {"Tracking Error", "0.168"},
+            {"Treynor Ratio", "3.113"},
+            {"Total Fees", "$8.00"},
+            {"Fitness Score", "0.098"},
+            {"Kelly Criterion Estimate", "0"},
+            {"Kelly Criterion Probability Value", "0"},
+            {"Sortino Ratio", "157.3"},
+            {"Return Over Maximum Drawdown", "1209.079"},
+            {"Portfolio Turnover", "0.098"},
+            {"Total Insights Generated", "0"},
+            {"Total Insights Closed", "0"},
+            {"Total Insights Analysis Completed", "0"},
+            {"Long Insight Count", "0"},
+            {"Short Insight Count", "0"},
+            {"Long/Short Ratio", "100%"},
+            {"Estimated Monthly Alpha Value", "$0"},
+            {"Total Accumulated Estimated Alpha Value", "$0"},
+            {"Mean Population Estimated Insight Value", "$0"},
+            {"Mean Population Direction", "0%"},
+            {"Mean Population Magnitude", "0%"},
+            {"Rolling Averaged Population Direction", "0%"},
+            {"Rolling Averaged Population Magnitude", "0%"},
+            {"OrderListHash", "1237222672"}
+        };
     }
 }

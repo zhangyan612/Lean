@@ -1,11 +1,11 @@
 /*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,7 +17,6 @@ using System;
 using System.Collections.Generic;
 using QuantConnect.Brokerages;
 using QuantConnect.Data;
-using QuantConnect.Data.Market;
 using QuantConnect.Orders;
 using QuantConnect.Securities;
 
@@ -27,7 +26,7 @@ namespace QuantConnect.Interfaces
     /// Brokerage interface that defines the operations all brokerages must implement. The IBrokerage implementation
     /// must have a matching IBrokerageFactory implementation.
     /// </summary>
-    public interface IBrokerage
+    public interface IBrokerage : IBrokerageCashSynchronizer, IDisposable
     {
         /// <summary>
         /// Event that fires each time an order is filled
@@ -75,7 +74,7 @@ namespace QuantConnect.Interfaces
         /// Gets the current cash balance for each currency held in the brokerage account
         /// </summary>
         /// <returns>The current cash balance for each currency available for trading</returns>
-        List<Cash> GetCashBalance();
+        List<CashAmount> GetCashBalance();
 
         /// <summary>
         /// Places a new order and assigns a new broker ID to the order

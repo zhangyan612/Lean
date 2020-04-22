@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,14 +15,9 @@
 */
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using QuantConnect.Data;
 using QuantConnect.Data.Market;
 using QLNet;
-using QuantConnect.Util;
 
 namespace QuantConnect.Securities.Option
 {
@@ -31,7 +26,7 @@ namespace QuantConnect.Securities.Option
     using PricingEngineFuncEx = Func<Symbol, GeneralizedBlackScholesProcess, IPricingEngine>;
 
     /// <summary>
-    /// Provides QuantLib(QL) implementation of <see cref="IOptionPriceModel"/> to support major option pricing models, available in QL. 
+    /// Provides QuantLib(QL) implementation of <see cref="IOptionPriceModel"/> to support major option pricing models, available in QL.
     /// </summary>
     class QLOptionPriceModel : IOptionPriceModel
     {
@@ -39,6 +34,12 @@ namespace QuantConnect.Securities.Option
         private readonly IQLRiskFreeRateEstimator _riskFreeRateEstimator;
         private readonly IQLDividendYieldEstimator _dividendYieldEstimator;
         private readonly PricingEngineFuncEx _pricingEngineFunc;
+
+        /// <summary>
+        /// When enabled, approximates Greeks if corresponding pricing model didn't calculate exact numbers.
+        /// The default value is true.
+        /// </summary>
+        public bool EnableGreekApproximation { get; set; } = true;
 
         /// <summary>
         /// Method constructs QuantLib option price model with necessary estimators of underlying volatility, risk free rate, and underlying dividend yield
@@ -124,9 +125,9 @@ namespace QuantConnect.Securities.Option
                     {
                         return (decimal)greek();
                     }
-                    catch (Exception err)
+                    catch (Exception)
                     {
-                        return optionSecurity.EnableGreekApproximation ? (decimal)reevalFunc() : 0.0m;
+                        return EnableGreekApproximation ? (decimal)reevalFunc() : 0.0m;
                     }
                 };
 
@@ -142,7 +143,7 @@ namespace QuantConnect.Securities.Option
                     }
                     catch (Exception err)
                     {
-                        Log.Debug("tryGetImpliedVol() error: " + err.Message);
+                        Log.Debug($"tryGetImpliedVol() error: {err.Message}");
                         return 0m;
                     }
                 };
@@ -155,7 +156,7 @@ namespace QuantConnect.Securities.Option
                     }
                     catch (Exception)
                     {
-                        if (optionSecurity.EnableGreekApproximation)
+                        if (EnableGreekApproximation)
                         {
                             var step = 0.01;
                             var initial = underlyingQuoteValue.value();
@@ -218,7 +219,7 @@ namespace QuantConnect.Securities.Option
             }
             catch(Exception err)
             {
-                Log.Debug("QLOptionPriceModel.Evaluate() error: " + err.Message);
+                Log.Debug($"QLOptionPriceModel.Evaluate() error: {err.Message}");
                 return new OptionPriceModelResult(0m, new Greeks());
             }
         }
@@ -242,7 +243,7 @@ namespace QuantConnect.Securities.Option
             }
             catch (Exception err)
             {
-                Log.Debug("QLOptionPriceModel.EvaluateOption() error: " + err.Message);
+                Log.Debug($"QLOptionPriceModel.EvaluateOption() error: {err.Message}");
                 return 0.0;
             }
         }

@@ -1,11 +1,11 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,17 +18,18 @@ using System.Collections.Generic;
 using System.Linq;
 using QuantConnect.Data.Market;
 using QuantConnect.Indicators;
+using QuantConnect.Interfaces;
 
-namespace QuantConnect.Algorithm.Examples
+namespace QuantConnect.Algorithm.CSharp
 {
     /// <summary>
     /// Constructs a displaced moving average ribbon and buys when all are lined up, liquidates when they all line down
     /// Ribbons are great for visualizing trends
     ///   Signals are generated when they all line up in a paricular direction
-    ///     A buy signal is when the values of the indicators are increasing (from slowest to fastest)
-    ///     A sell signal is when the values of the indicators are decreasing (from slowest to fastest)
+    ///     A buy signal is when the values of the indicators are increasing (from slowest to fastest).
+    ///     A sell signal is when the values of the indicators are decreasing (from slowest to fastest).
     /// </summary>
-    public class DisplacedMovingAverageRibbon : QCAlgorithm
+    public class DisplacedMovingAverageRibbon : QCAlgorithm, IRegressionAlgorithmDefinition
     {
         private Symbol _spy = QuantConnect.Symbol.Create("SPY", SecurityType.Equity, Market.USA);
         private IndicatorBase<IndicatorDataPoint>[] _ribbon;
@@ -36,6 +37,8 @@ namespace QuantConnect.Algorithm.Examples
         /// <summary>
         /// Initialise the data and resolution required, as well as the cash and start-end dates for your algorithm. All algorithms must initialized.
         /// </summary>
+        /// <meta name="tag" content="charting" />
+        /// <meta name="tag" content="plotting indicators" />
         /// <seealso cref="QCAlgorithm.SetStartDate(System.DateTime)"/>
         /// <seealso cref="QCAlgorithm.SetEndDate(System.DateTime)"/>
         /// <seealso cref="QCAlgorithm.SetCash(decimal)"/>
@@ -44,11 +47,11 @@ namespace QuantConnect.Algorithm.Examples
             SetStartDate(2009, 01, 01);
             SetEndDate(2015, 01, 01);
 
-            AddSecurity(SecurityType.Equity, "SPY", Resolution.Minute);
+            AddSecurity(SecurityType.Equity, "SPY", Resolution.Daily);
 
-            int count = 6;
-            int offset = 5;
-            int period = 15;
+            const int count = 6;
+            const int offset = 5;
+            const int period = 15;
 
             // define our sma as the base of the ribbon
             var sma = new SimpleMovingAverage(period);
@@ -147,5 +150,62 @@ namespace QuantConnect.Algorithm.Examples
             }
             return true;
         }
+
+        /// <summary>
+        /// This is used by the regression test system to indicate if the open source Lean repository has the required data to run this algorithm.
+        /// </summary>
+        public bool CanRunLocally { get; } = true;
+
+        /// <summary>
+        /// This is used by the regression test system to indicate which languages this algorithm is written in.
+        /// </summary>
+        public Language[] Languages { get; } = { Language.CSharp, Language.Python };
+
+        /// <summary>
+        /// This is used by the regression test system to indicate what the expected statistics are from running the algorithm
+        /// </summary>
+        public Dictionary<string, string> ExpectedStatistics => new Dictionary<string, string>
+        {
+            {"Total Trades", "7"},
+            {"Average Win", "19.16%"},
+            {"Average Loss", "0%"},
+            {"Compounding Annual Return", "16.727%"},
+            {"Drawdown", "12.200%"},
+            {"Expectancy", "0"},
+            {"Net Profit", "153.058%"},
+            {"Sharpe Ratio", "1.239"},
+            {"Probabilistic Sharpe Ratio", "66.414%"},
+            {"Loss Rate", "0%"},
+            {"Win Rate", "100%"},
+            {"Profit-Loss Ratio", "0"},
+            {"Alpha", "0.146"},
+            {"Beta", "-0.018"},
+            {"Annual Standard Deviation", "0.116"},
+            {"Annual Variance", "0.013"},
+            {"Information Ratio", "-0.053"},
+            {"Tracking Error", "0.204"},
+            {"Treynor Ratio", "-8.165"},
+            {"Total Fees", "$46.75"},
+            {"Fitness Score", "0.002"},
+            {"Kelly Criterion Estimate", "0"},
+            {"Kelly Criterion Probability Value", "0"},
+            {"Sortino Ratio", "1.607"},
+            {"Return Over Maximum Drawdown", "1.366"},
+            {"Portfolio Turnover", "0.003"},
+            {"Total Insights Generated", "0"},
+            {"Total Insights Closed", "0"},
+            {"Total Insights Analysis Completed", "0"},
+            {"Long Insight Count", "0"},
+            {"Short Insight Count", "0"},
+            {"Long/Short Ratio", "100%"},
+            {"Estimated Monthly Alpha Value", "$0"},
+            {"Total Accumulated Estimated Alpha Value", "$0"},
+            {"Mean Population Estimated Insight Value", "$0"},
+            {"Mean Population Direction", "0%"},
+            {"Mean Population Magnitude", "0%"},
+            {"Rolling Averaged Population Direction", "0%"},
+            {"Rolling Averaged Population Magnitude", "0%"},
+            {"OrderListHash", "-807056289"}
+        };
     }
 }

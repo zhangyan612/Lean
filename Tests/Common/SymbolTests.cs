@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -21,7 +21,6 @@ using Newtonsoft.Json;
 using NUnit.Framework;
 using QuantConnect.Data;
 using QuantConnect.Data.Market;
-using QuantConnect.Securities;
 using QuantConnect.Securities.Option;
 
 namespace QuantConnect.Tests.Common
@@ -52,6 +51,61 @@ namespace QuantConnect.Tests.Common
         }
 
         [Test]
+        public void SymbolCreateBaseWithUnderlyingEquity()
+        {
+            var type = typeof(BaseData);
+            var equitySymbol = Symbol.Create("TWX", SecurityType.Equity, Market.USA);
+            var symbol = Symbol.CreateBase(type, equitySymbol, Market.USA);
+            var symbolIDSymbol = symbol.ID.Symbol.Split(new[] { ".BaseData" }, StringSplitOptions.None).First();
+
+            Assert.IsTrue(symbol.SecurityType == SecurityType.Base);
+            Assert.IsTrue(symbol.HasUnderlying);
+
+            Assert.AreEqual(symbol.Underlying, equitySymbol);
+
+            Assert.AreEqual(symbol.ID.Date, new DateTime(1998, 1, 2));
+            Assert.AreEqual("AOL", symbolIDSymbol);
+
+            Assert.AreEqual(symbol.Underlying.ID.Symbol, symbolIDSymbol);
+            Assert.AreEqual(symbol.Underlying.ID.Date, symbol.ID.Date);
+
+            Assert.AreEqual(symbol.Underlying.Value, equitySymbol.Value);
+            Assert.AreEqual(symbol.Underlying.Value, symbol.Value);
+        }
+
+        [Test]
+        public void SymbolCreateBaseWithUnderlyingOption()
+        {
+            var type = typeof(BaseData);
+            var optionSymbol = Symbol.CreateOption("TWX", Market.USA, OptionStyle.American, OptionRight.Call, 100, new DateTime(2050, 12, 31));
+            var symbol = Symbol.CreateBase(type, optionSymbol, Market.USA);
+            var symbolIDSymbol = symbol.ID.Symbol.Split(new[] { ".BaseData" }, StringSplitOptions.None).First();
+
+            Assert.IsTrue(symbol.SecurityType == SecurityType.Base);
+            Assert.IsTrue(symbol.HasUnderlying);
+
+            Assert.AreEqual(symbol.Underlying, optionSymbol);
+
+            Assert.IsTrue(symbol.Underlying.HasUnderlying);
+            Assert.AreEqual(symbol.Underlying.Underlying.SecurityType, SecurityType.Equity);
+
+            Assert.AreEqual(new DateTime(2050, 12, 31), symbol.ID.Date);
+            Assert.AreEqual("AOL", symbolIDSymbol);
+
+            Assert.AreEqual(symbol.Underlying.ID.Symbol, symbolIDSymbol);
+            Assert.AreEqual(symbol.Underlying.ID.Date, symbol.ID.Date);
+            Assert.AreEqual(symbol.Underlying.Value, symbol.Value);
+
+            Assert.AreEqual(symbol.Underlying.Underlying.ID.Symbol, symbolIDSymbol);
+            Assert.AreNotEqual(symbol.Underlying.Underlying.ID.Date, symbol.ID.Date);
+            Assert.IsTrue(symbol.Value.StartsWith(symbol.Underlying.Underlying.Value));
+
+            Assert.AreEqual(symbol.Underlying.Underlying.ID.Symbol, symbol.Underlying.ID.Symbol);
+            Assert.AreNotEqual(symbol.Underlying.Underlying.ID.Date, symbol.Underlying.ID.Date);
+            Assert.IsTrue(symbol.Underlying.Value.StartsWith(symbol.Underlying.Underlying.Value));
+        }
+
+        [Test]
         public void SymbolCreateWithOptionSecurityTypeCreatesCanonicalOptionSymbol()
         {
             var symbol = Symbol.Create("SPY", SecurityType.Option, Market.USA);
@@ -71,7 +125,7 @@ namespace QuantConnect.Tests.Common
 
         [Test]
         public void UsesSidForDictionaryKey()
-        {   
+        {
             var sid = SecurityIdentifier.GenerateEquity("SPY", Market.USA);
             var dictionary = new Dictionary<Symbol, int>
             {
@@ -81,7 +135,7 @@ namespace QuantConnect.Tests.Common
             var key = new Symbol(sid, "other value");
             Assert.IsTrue(dictionary.ContainsKey(key));
         }
-        
+
         [Test]
         public void SurvivesRoundtripSerialization()
         {
@@ -191,7 +245,7 @@ namespace QuantConnect.Tests.Common
                     "'Value':0.72157,'Price':0.72157}," +
 
                     "]}";
-            
+
             var actual = JsonConvert.DeserializeObject<List<BaseData>>(json, Settings);
             Assert.IsFalse(actual.All(x => x.Symbol == new Symbol(SecurityIdentifier.GenerateForex("EURUSD", Market.FXCM), "EURUSD")));
         }
@@ -268,6 +322,74 @@ namespace QuantConnect.Tests.Common
         {
             var a = new Symbol(SecurityIdentifier.GenerateForex("a", Market.FXCM), "a");
             Assert.AreEqual(0, a.CompareTo("A"));
+        }
+
+        [Test]
+        public void EqualsAgainstNullOrEmpty()
+        {
+            var validSymbol = Symbols.SPY;
+            var emptySymbol = Symbol.Empty;
+            var emptySymbolInstance = new Symbol(SecurityIdentifier.Empty, string.Empty);
+            Symbol nullSymbol = null;
+
+            Assert.IsTrue(emptySymbol.Equals(nullSymbol));
+            Assert.IsTrue(Symbol.Empty.Equals(nullSymbol));
+            Assert.IsTrue(emptySymbolInstance.Equals(nullSymbol));
+
+            Assert.IsTrue(emptySymbol.Equals(emptySymbol));
+            Assert.IsTrue(Symbol.Empty.Equals(emptySymbol));
+            Assert.IsTrue(emptySymbolInstance.Equals(emptySymbol));
+
+            Assert.IsFalse(validSymbol.Equals(nullSymbol));
+            Assert.IsFalse(validSymbol.Equals(emptySymbol));
+            Assert.IsFalse(validSymbol.Equals(emptySymbolInstance));
+            Assert.IsFalse(Symbol.Empty.Equals(validSymbol));
+        }
+
+        [Test]
+        public void ComparesAgainstNullOrEmpty()
+        {
+            var validSymbol = Symbols.SPY;
+            var emptySymbol = Symbol.Empty;
+            Symbol nullSymbol = null;
+
+            Assert.IsTrue(nullSymbol == emptySymbol);
+            Assert.IsFalse(nullSymbol != emptySymbol);
+
+            Assert.IsTrue(emptySymbol == nullSymbol);
+            Assert.IsFalse(emptySymbol != nullSymbol);
+
+            Assert.IsTrue(validSymbol != null);
+            Assert.IsTrue(emptySymbol == null);
+            Assert.IsTrue(nullSymbol == null);
+
+            Assert.IsFalse(validSymbol == null);
+            Assert.IsFalse(emptySymbol != null);
+            Assert.IsFalse(nullSymbol != null);
+
+            Assert.IsTrue(validSymbol != Symbol.Empty);
+            Assert.IsTrue(emptySymbol == Symbol.Empty);
+            Assert.IsTrue(nullSymbol == Symbol.Empty);
+
+            Assert.IsFalse(validSymbol == Symbol.Empty);
+            Assert.IsFalse(emptySymbol != Symbol.Empty);
+            Assert.IsFalse(nullSymbol != Symbol.Empty);
+
+            Assert.IsTrue(null != validSymbol);
+            Assert.IsTrue(null == emptySymbol);
+            Assert.IsTrue(null == nullSymbol);
+
+            Assert.IsFalse(null == validSymbol);
+            Assert.IsFalse(null != emptySymbol);
+            Assert.IsFalse(null != nullSymbol);
+
+            Assert.IsTrue(Symbol.Empty != validSymbol);
+            Assert.IsTrue(Symbol.Empty == emptySymbol);
+            Assert.IsTrue(Symbol.Empty == nullSymbol);
+
+            Assert.IsFalse(Symbol.Empty == validSymbol);
+            Assert.IsFalse(Symbol.Empty != emptySymbol);
+            Assert.IsFalse(Symbol.Empty != nullSymbol);
         }
 
         [Test]
@@ -391,6 +513,27 @@ namespace QuantConnect.Tests.Common
 
             Assert.AreEqual(new DateTime(2016, 02, 19)/*Friday*/, OptionSymbol.GetLastDayOfTrading(symbol));
             Assert.AreEqual(new DateTime(2016, 02, 05)/*Friday*/, OptionSymbol.GetLastDayOfTrading(weeklySymbol));
+        }
+
+        [Test]
+        public void HasUnderlyingSymbolReturnsTrueWhenSpecifyingCorrectUnderlying()
+        {
+            Assert.IsTrue(Symbols.SPY_C_192_Feb19_2016.HasUnderlyingSymbol(Symbols.SPY));
+        }
+
+        [Test]
+        public void HasUnderlyingSymbolReturnsFalsWhenSpecifyingIncorrectUnderlying()
+        {
+            Assert.IsFalse(Symbols.SPY_C_192_Feb19_2016.HasUnderlyingSymbol(Symbols.AAPL));
+        }
+
+        [Test]
+        public void TestIfFridayLastTradingDayIsHolidaysThenMoveToPreviousThursday()
+        {
+            var saturdayAfterGoodFriday = new DateTime(2014, 04, 19);
+            var thursdayBeforeGoodFriday = saturdayAfterGoodFriday.AddDays(-2);
+            var symbol = Symbol.CreateOption("SPY", Market.USA, OptionStyle.American, OptionRight.Call, 200, saturdayAfterGoodFriday);
+            Assert.AreEqual(thursdayBeforeGoodFriday, OptionSymbol.GetLastDayOfTrading(symbol));
         }
 
         class OldSymbol

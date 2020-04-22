@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,6 +19,7 @@ using QuantConnect.Securities;
 
 using System.Diagnostics;
 using Newtonsoft.Json;
+using QuantConnect;
 using QuantConnect.Data;
 using QuantConnect.Data.Market;
 
@@ -46,9 +47,9 @@ namespace QuantConnect
             string display = "";
             foreach (var bar in data.Values)
             {
-                display += ">> " + bar.Symbol + ": " + bar.Value.ToString("C");
+                display += ">> " + bar.Symbol + ": " + bar.Value.ToStringInvariant("C");
             }
-            Debug("ALGO>> OnData(TradeBar) >> " + Time.ToString() + " >> " + data.Count + " >> " + display);
+            Debug("ALGO>> OnData(TradeBar) >> " + Time.ToStringInvariant() + " >> " + data.Count + " >> " + display);
         }
 
         //Bitcoin Handler:
@@ -98,7 +99,7 @@ namespace QuantConnect
             {
                 //Historical backtesting data:
                 case DataFeedEndpoint.Backtesting:
-                    source = "http://www.quandl.com/api/v1/datasets/BITCOIN/BITSTAMPUSD.csv?sort_order=asc";
+                    source = "https://www.quandl.com/api/v3/datasets/BCHARTS/BITSTAMPUSD.csv?order=asc";
                     break;
 
                 //Live socket for bitcoin prices:
@@ -146,13 +147,13 @@ namespace QuantConnect
                     try
                     {
                         string[] data = line.Split(',');
-                        coin.Time = DateTime.Parse(data[0], CultureInfo.InvariantCulture);
-                        coin.Open = Convert.ToDecimal(data[1], CultureInfo.InvariantCulture);
-                        coin.High = Convert.ToDecimal(data[2], CultureInfo.InvariantCulture);
-                        coin.Low = Convert.ToDecimal(data[3], CultureInfo.InvariantCulture);
-                        coin.Close = Convert.ToDecimal(data[4], CultureInfo.InvariantCulture);
-                        coin.VolumeBTC = Convert.ToDecimal(data[5]);
-                        coin.WeightedPrice = Convert.ToDecimal(data[7]);
+                        coin.Time = data[0].ParseDateTimeInvariant();
+                        coin.Open = data[1].ParseDecimalInvariant();
+                        coin.High = data[2].ParseDecimalInvariant();
+                        coin.Low = data[3].ParseDecimalInvariant();
+                        coin.Close = data[4].ParseDecimalInvariant();
+                        coin.VolumeBTC = data[5].ParseDecimalInvariant();
+                        coin.WeightedPrice = data[7].ParseDecimalInvariant();
                         coin.Symbol = "BTC";
                         coin.Value = coin.Close;
                     }
@@ -179,7 +180,7 @@ namespace QuantConnect
                     catch { /* Do nothing, possible error in json decoding */ }
                     break;
             }
-            
+
             return coin;
         }
     }

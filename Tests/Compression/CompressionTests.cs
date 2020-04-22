@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -13,12 +13,14 @@
  * limitations under the License.
 */
 
+using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
 using Ionic.Zip;
+using Newtonsoft.Json;
 using NUnit.Framework;
-using System.IO.Compression;
 
 namespace QuantConnect.Tests.Compression
 {
@@ -52,6 +54,16 @@ namespace QuantConnect.Tests.Compression
         }
 
         [Test]
+        public void ZipBytesReturnsByteArrayWithCorrectLength()
+        {
+            const string file = "../../../Data/equity/usa/tick/spy/20131007_trade.zip";
+            var fileBytes = File.ReadAllBytes(file);
+            var zippedBytes = QuantConnect.Compression.ZipBytes(fileBytes, "entry");
+
+            Assert.AreEqual(899352, zippedBytes.Length);
+        }
+
+        [Test]
         public void ExtractsZipEntryByName()
         {
             var zip = Path.Combine("TestData", "multizip.zip");
@@ -62,6 +74,108 @@ namespace QuantConnect.Tests.Compression
                 var text = entryStream.ReadToEnd();
                 Assert.AreEqual("2", text);
             }
+        }
+
+        [Test]
+        public void ReadsZipEntryFileNames()
+        {
+            var zipFileName = Path.Combine("TestData", "20151224_quote_american.zip");
+            var entryFileNames = QuantConnect.Compression.GetZipEntryFileNames(zipFileName).ToList();
+
+            var expectedFileNames = new[]
+            {
+                "20151224_xlre_tick_quote_american_call_210000_20160819.csv",
+                "20151224_xlre_tick_quote_american_call_220000_20160819.csv",
+                "20151224_xlre_tick_quote_american_put_370000_20160819.csv"
+            };
+
+            Assert.AreEqual(expectedFileNames.Length, entryFileNames.Count);
+
+            for (var i = 0; i < entryFileNames.Count; i++)
+            {
+                Assert.AreEqual(expectedFileNames[i], entryFileNames[i]);
+            }
+        }
+
+        [Test]
+        public void UnzipToFolderDoesNotStripSubDirectories()
+        {
+            var name = nameof(UnzipToFolderDoesNotStripSubDirectories);
+            var root = new DirectoryInfo(name);
+            var testPath = Path.Combine(root.FullName, "test.txt");
+            var test2Path = Path.Combine(Path.Combine(root.FullName, "sub"), "test2.txt");
+            var zipFile = $"./{name}.zip";
+            var files = new List<string>();
+            try
+            {
+                root.Create();
+                File.WriteAllText(testPath, "string contents");
+                var sub = root.CreateSubdirectory("sub");
+                File.WriteAllText(test2Path, "string contents 2");
+                QuantConnect.Compression.ZipDirectory(root.FullName, zipFile);
+                Directory.Delete(root.FullName, true);
+                files = QuantConnect.Compression.UnzipToFolder(zipFile);
+
+                Assert.IsTrue(File.Exists(testPath));
+                Assert.IsTrue(File.Exists(test2Path));
+            }
+            finally
+            {
+                File.Delete(zipFile);
+                files.ForEach(File.Delete);
+            }
+        }
+
+        [Test]
+        public void UnzipToFolderUsesCorrectOutputFolder()
+        {
+            var name = nameof(UnzipToFolderUsesCorrectOutputFolder);
+            var root = new DirectoryInfo(name);
+            var testPath = Path.Combine(root.FullName, "test.txt");
+            var test2Path = Path.Combine(Path.Combine(root.FullName, "sub"), "test2.txt");
+            var zipFile = $"./jo\\se/{name}.zip";
+            var files = new List<string>();
+            try
+            {
+                Directory.CreateDirectory("./jo\\se");
+                root.Create();
+                File.WriteAllText(testPath, "string contents");
+                var sub = root.CreateSubdirectory("sub");
+                File.WriteAllText(test2Path, "string contents 2");
+                QuantConnect.Compression.ZipDirectory(root.FullName, zipFile);
+                Directory.Delete(root.FullName, true);
+                files = QuantConnect.Compression.UnzipToFolder(zipFile);
+
+                Assert.IsTrue(File.Exists(Path.Combine(root.Parent.FullName, "jo\\se", name, "test.txt")));
+                Assert.IsTrue(File.Exists(Path.Combine(root.Parent.FullName, "jo\\se", name, "sub", "test2.txt")));
+            }
+            finally
+            {
+                File.Delete(zipFile);
+                files.ForEach(File.Delete);
+            }
+        }
+
+        [Test]
+        public void UnzipDataSupportsEncoding()
+        {
+            var data = new Dictionary<string, string>
+            {
+                {"Ł", "The key is unicode"}
+            };
+
+            var encoding = Encoding.UTF8;
+            var bytes = encoding.GetBytes(JsonConvert.SerializeObject(data));
+            var compressed = QuantConnect.Compression.ZipBytes(bytes, "entry.json");
+            var decompressed = QuantConnect.Compression.UnzipData(compressed, encoding);
+            var redata = JsonConvert.DeserializeObject<Dictionary<string, string>>(
+                decompressed.Single().Value
+            );
+
+            var expected = data.Single();
+            var actual = redata.Single();
+            Assert.AreEqual(expected.Key, actual.Key);
+            Assert.AreEqual(expected.Value, actual.Value);
         }
     }
 }

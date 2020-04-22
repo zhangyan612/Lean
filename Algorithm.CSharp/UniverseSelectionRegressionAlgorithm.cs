@@ -1,11 +1,11 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -20,16 +20,17 @@ using QuantConnect.Data;
 using QuantConnect.Data.UniverseSelection;
 using QuantConnect.Orders;
 using QuantConnect.Securities;
+using QuantConnect.Interfaces;
 
 namespace QuantConnect.Algorithm.CSharp
 {
     /// <summary>
-    /// Universe Selection regression algorithm simulates an edge case.
-    /// In one week, Google listed two new symbols, delisted one of them and changed tickers.
+    /// Universe Selection regression algorithm simulates an edge case. In one week, Google listed two new symbols, delisted one of them and changed tickers.
     /// </summary>
-    public class UniverseSelectionRegressionAlgorithm : QCAlgorithm
+    /// <meta name="tag" content="regression test" />
+    public class UniverseSelectionRegressionAlgorithm : QCAlgorithm, IRegressionAlgorithmDefinition
     {
-        private HashSet<Symbol> _delistedSymbols = new HashSet<Symbol>(); 
+        private HashSet<Symbol> _delistedSymbols = new HashSet<Symbol>();
         private SecurityChanges _changes;
         /// <summary>
         /// Initialise the data and resolution required, as well as the cash and start-end dates for your algorithm. All algorithms must initialized.
@@ -73,6 +74,21 @@ namespace QuantConnect.Algorithm.CSharp
         /// <param name="data">Slice object keyed by symbol containing the stock data</param>
         public override void OnData(Slice data)
         {
+            // can access the current set of active securitie through UniverseManager.ActiveSecurities
+            Log(Time + ": Active Securities: " + string.Join(", ", UniverseManager.ActiveSecurities.Keys));
+
+            // verify we don't receive data for inactive securities
+            var inactiveSymbols = data.Keys
+                .Where(sym => !UniverseManager.ActiveSecurities.ContainsKey(sym))
+                // on daily data we'll get the last data point and the delisting at the same time
+                .Where(sym => !data.Delistings.ContainsKey(sym) || data.Delistings[sym].Type != DelistingType.Delisted)
+                .ToList();
+            if (inactiveSymbols.Any())
+            {
+                var symbols = string.Join(", ", inactiveSymbols);
+                throw new Exception($"Received data for non-active security: {symbols}.");
+            }
+
             if (Transactions.OrdersCount == 0)
             {
                 MarketOrder("SPY", 100);
@@ -101,7 +117,7 @@ namespace QuantConnect.Algorithm.CSharp
                 _changes = null;
             }
         }
-        
+
         public override void OnSecuritiesChanged(SecurityChanges changes)
         {
             _changes = changes;
@@ -123,10 +139,10 @@ namespace QuantConnect.Algorithm.CSharp
         {
             foreach (var security in Portfolio.Securities.Values.Where(x => x.Invested))
             {
-                // At the end, we should hold 100 shares of: 
+                // At the end, we should hold 100 shares of:
                 // - SPY                (bought on March, 25th 2014),
                 // - GOOG  T1AZ164W5VTX (bought on March, 26th 2014),
-                // - GOOCV VP83T1ZUHROL (bought on March, 28th 2014). 
+                // - GOOCV VP83T1ZUHROL (bought on March, 28th 2014).
                 AssertQuantity(security, 100);
             }
         }
@@ -137,8 +153,65 @@ namespace QuantConnect.Algorithm.CSharp
             if (actual != expected)
             {
                 var symbol = security.Symbol;
-                throw new Exception(string.Format("{0}({1}) expected {2}, but received {3}.", symbol, symbol.ID, expected, actual));
+                throw new Exception($"{symbol}({symbol.ID}) expected {expected.ToStringInvariant()}, but received {actual.ToStringInvariant()}.");
             }
         }
+
+        /// <summary>
+        /// This is used by the regression test system to indicate if the open source Lean repository has the required data to run this algorithm.
+        /// </summary>
+        public bool CanRunLocally { get; } = true;
+
+        /// <summary>
+        /// This is used by the regression test system to indicate which languages this algorithm is written in.
+        /// </summary>
+        public Language[] Languages { get; } = { Language.CSharp, Language.Python };
+
+        /// <summary>
+        /// This is used by the regression test system to indicate what the expected statistics are from running the algorithm
+        /// </summary>
+        public Dictionary<string, string> ExpectedStatistics => new Dictionary<string, string>
+        {
+            {"Total Trades", "5"},
+            {"Average Win", "0.64%"},
+            {"Average Loss", "0%"},
+            {"Compounding Annual Return", "-74.197%"},
+            {"Drawdown", "6.600%"},
+            {"Expectancy", "0"},
+            {"Net Profit", "-6.115%"},
+            {"Sharpe Ratio", "-2.281"},
+            {"Probabilistic Sharpe Ratio", "11.870%"},
+            {"Loss Rate", "0%"},
+            {"Win Rate", "100%"},
+            {"Profit-Loss Ratio", "0"},
+            {"Alpha", "-0.684"},
+            {"Beta", "-0.113"},
+            {"Annual Standard Deviation", "0.292"},
+            {"Annual Variance", "0.085"},
+            {"Information Ratio", "-1.606"},
+            {"Tracking Error", "0.312"},
+            {"Treynor Ratio", "5.866"},
+            {"Total Fees", "$5.00"},
+            {"Fitness Score", "0.017"},
+            {"Kelly Criterion Estimate", "0"},
+            {"Kelly Criterion Probability Value", "0"},
+            {"Sortino Ratio", "-2.584"},
+            {"Return Over Maximum Drawdown", "-11.287"},
+            {"Portfolio Turnover", "0.177"},
+            {"Total Insights Generated", "0"},
+            {"Total Insights Closed", "0"},
+            {"Total Insights Analysis Completed", "0"},
+            {"Long Insight Count", "0"},
+            {"Short Insight Count", "0"},
+            {"Long/Short Ratio", "100%"},
+            {"Estimated Monthly Alpha Value", "$0"},
+            {"Total Accumulated Estimated Alpha Value", "$0"},
+            {"Mean Population Estimated Insight Value", "$0"},
+            {"Mean Population Direction", "0%"},
+            {"Mean Population Magnitude", "0%"},
+            {"Rolling Averaged Population Direction", "0%"},
+            {"Rolling Averaged Population Magnitude", "0%"},
+            {"OrderListHash", "-1386253041"}
+        };
     }
 }

@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,7 +19,7 @@ using System.Collections.Generic;
 using NodaTime;
 using QuantConnect.Securities;
 using QuantConnect.Logging;
-using System.Linq;
+using Python.Runtime;
 
 namespace QuantConnect.Scheduling
 {
@@ -37,12 +37,12 @@ namespace QuantConnect.Scheduling
         /// <summary>
         /// Gets the date rules helper object to make specifying dates for events easier
         /// </summary>
-        public DateRules DateRules { get; private set; }
+        public DateRules DateRules { get; }
 
         /// <summary>
         /// Gets the time rules helper object to make specifying times for events easier
         /// </summary>
-        public TimeRules TimeRules { get; private set; }
+        public TimeRules TimeRules { get; }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="ScheduleManager"/> class
@@ -52,7 +52,7 @@ namespace QuantConnect.Scheduling
         public ScheduleManager(SecurityManager securities, DateTimeZone timeZone)
         {
             _securities = securities;
-            DateRules = new DateRules(securities);
+            DateRules = new DateRules(securities, timeZone);
             TimeRules = new TimeRules(securities, timeZone);
 
             // used for storing any events before the event schedule is set
@@ -67,7 +67,7 @@ namespace QuantConnect.Scheduling
         {
             if (eventSchedule == null)
             {
-                throw new ArgumentNullException("eventSchedule");
+                throw new ArgumentNullException(nameof(eventSchedule));
             }
 
             lock (_eventScheduleLock)
@@ -83,7 +83,7 @@ namespace QuantConnect.Scheduling
         }
 
         /// <summary>
-        /// Adds the specified event to the schedule using the <see cref="ScheduledEvent.Name"/> as a key.
+        /// Adds the specified event to the schedule
         /// </summary>
         /// <param name="scheduledEvent">The event to be scheduled, including the date/times the event fires and the callback</param>
         public void Add(ScheduledEvent scheduledEvent)
@@ -102,20 +102,20 @@ namespace QuantConnect.Scheduling
         }
 
         /// <summary>
-        /// Removes the event with the specified name from the schedule
+        /// Removes the specified event from the schedule
         /// </summary>
-        /// <param name="name">The name of the event to be removed</param>
-        public void Remove(string name)
+        /// <param name="scheduledEvent">The event to be removed</param>
+        public void Remove(ScheduledEvent scheduledEvent)
         {
             lock (_eventScheduleLock)
             {
                 if (_eventSchedule != null)
                 {
-                    _eventSchedule.Remove(name);
+                    _eventSchedule.Remove(scheduledEvent);
                 }
                 else
                 {
-                    _preInitializedEvents.RemoveAll(se => se.Name == name);
+                    _preInitializedEvents.RemoveAll(se => Equals(se, scheduledEvent));
                 }
             }
         }
@@ -137,9 +137,20 @@ namespace QuantConnect.Scheduling
         /// <param name="dateRule">Specifies what dates the event should run</param>
         /// <param name="timeRule">Specifies the times on those dates the event should run</param>
         /// <param name="callback">The callback to be invoked</param>
+        public ScheduledEvent On(IDateRule dateRule, ITimeRule timeRule, PyObject callback)
+        {
+            return On(dateRule, timeRule, (name, time) => { using (Py.GIL()) callback.Invoke(); });
+        }
+
+        /// <summary>
+        /// Schedules the callback to run using the specified date and time rules
+        /// </summary>
+        /// <param name="dateRule">Specifies what dates the event should run</param>
+        /// <param name="timeRule">Specifies the times on those dates the event should run</param>
+        /// <param name="callback">The callback to be invoked</param>
         public ScheduledEvent On(IDateRule dateRule, ITimeRule timeRule, Action<string, DateTime> callback)
         {
-            var name = dateRule.Name + ": " + timeRule.Name;
+            var name = $"{dateRule.Name}: {timeRule.Name}";
             return On(name, dateRule, timeRule, callback);
         }
 
@@ -162,6 +173,18 @@ namespace QuantConnect.Scheduling
         /// <param name="dateRule">Specifies what dates the event should run</param>
         /// <param name="timeRule">Specifies the times on those dates the event should run</param>
         /// <param name="callback">The callback to be invoked</param>
+        public ScheduledEvent On(string name, IDateRule dateRule, ITimeRule timeRule, PyObject callback)
+        {
+            return On(name, dateRule, timeRule, (n, d) => { using (Py.GIL()) callback.Invoke(); });
+        }
+
+        /// <summary>
+        /// Schedules the callback to run using the specified date and time rules
+        /// </summary>
+        /// <param name="name">The event's unique name</param>
+        /// <param name="dateRule">Specifies what dates the event should run</param>
+        /// <param name="timeRule">Specifies the times on those dates the event should run</param>
+        /// <param name="callback">The callback to be invoked</param>
         public ScheduledEvent On(string name, IDateRule dateRule, ITimeRule timeRule, Action<string, DateTime> callback)
         {
             // back the date up to ensure we get all events, the event scheduler will skip past events that whose time has passed
@@ -170,19 +193,14 @@ namespace QuantConnect.Scheduling
             var scheduledEvent = new ScheduledEvent(name, eventTimes, callback);
             Add(scheduledEvent);
 
-            var exampleTimes = eventTimes.Take(3)
-                    .Select(x => x.ToString())
-                    .ToArray();
-
-            if (exampleTimes.Length > 0)
+            // ScheduledEvent constructor will prime the scheduled event
+            if (scheduledEvent.NextEventUtcTime != DateTime.MaxValue)
             {
-                Log.Trace("Event Name \"{0}\", scheduled to run at {1} (UTC){2}",
-                        name, string.Join(", ", exampleTimes),
-                        exampleTimes.Length > 1? "..." : "");
+                Log.Trace($"Event Name \"{scheduledEvent.Name}\", scheduled to run at {scheduledEvent.NextEventUtcTime} (UTC)...");
             }
             else
             {
-                Log.Trace("Event Name \"{0}\", scheduled to run, but no event times were selected", name);
+                Log.Error($"Event Name \"{scheduledEvent.Name}\", scheduled to run, but no event times were selected");
             }
 
             return scheduledEvent;
@@ -204,6 +222,63 @@ namespace QuantConnect.Scheduling
         public IFluentSchedulingDateSpecifier Event(string name)
         {
             return new FluentScheduledEventBuilder(this, _securities, name);
+        }
+
+        #endregion
+
+        #region Training Events
+
+        /// <summary>
+        /// Schedules the provided training code to execute immediately
+        /// </summary>
+        public ScheduledEvent TrainingNow(Action trainingCode)
+        {
+            return On($"Training: Now: {_securities.UtcTime:O}", DateRules.Today, TimeRules.Now, trainingCode);
+        }
+
+        /// <summary>
+        /// Schedules the provided training code to execute immediately
+        /// </summary>
+        public ScheduledEvent TrainingNow(PyObject trainingCode)
+        {
+            return On($"Training: Now: {_securities.UtcTime:O}", DateRules.Today, TimeRules.Now, trainingCode);
+        }
+
+        /// <summary>
+        /// Schedules the training code to run using the specified date and time rules
+        /// </summary>
+        /// <param name="dateRule">Specifies what dates the event should run</param>
+        /// <param name="timeRule">Specifies the times on those dates the event should run</param>
+        /// <param name="trainingCode">The training code to be invoked</param>
+        public ScheduledEvent Training(IDateRule dateRule, ITimeRule timeRule, Action trainingCode)
+        {
+            var name = $"{dateRule.Name}: {timeRule.Name}";
+            return On(name, dateRule, timeRule, (n, time) => trainingCode());
+        }
+
+
+        /// <summary>
+        /// Schedules the training code to run using the specified date and time rules
+        /// </summary>
+        /// <param name="dateRule">Specifies what dates the event should run</param>
+        /// <param name="timeRule">Specifies the times on those dates the event should run</param>
+        /// <param name="trainingCode">The training code to be invoked</param>
+        public ScheduledEvent Training(IDateRule dateRule, ITimeRule timeRule, PyObject trainingCode)
+        {
+            var name = $"{dateRule.Name}: {timeRule.Name}";
+            return On(name, dateRule, timeRule, (n, time) => { using (Py.GIL()) trainingCode.Invoke(); });
+        }
+
+        /// <summary>
+        /// Schedules the training code to run using the specified date and time rules
+        /// </summary>
+        /// <param name="dateRule">Specifies what dates the event should run</param>
+        /// <param name="timeRule">Specifies the times on those dates the event should run</param>
+        /// <param name="trainingCode">The training code to be invoked</param>
+        public ScheduledEvent Training(IDateRule dateRule, ITimeRule timeRule, Action<DateTime> trainingCode)
+        {
+            var name = $"{dateRule.Name}: {timeRule.Name}";
+            return On(name, dateRule, timeRule, (n, time) => trainingCode(time));
         }
 
         #endregion

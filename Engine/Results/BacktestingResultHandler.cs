@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,156 +15,46 @@
 */
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading;
-using Newtonsoft.Json;
 using QuantConnect.Configuration;
 using QuantConnect.Interfaces;
-using QuantConnect.Lean.Engine.DataFeeds;
-using QuantConnect.Lean.Engine.Setup;
 using QuantConnect.Lean.Engine.TransactionHandlers;
 using QuantConnect.Logging;
 using QuantConnect.Orders;
 using QuantConnect.Packets;
 using QuantConnect.Statistics;
 using QuantConnect.Util;
-using System.Diagnostics;
+using System.IO;
+using QuantConnect.Lean.Engine.Alphas;
 
 namespace QuantConnect.Lean.Engine.Results
 {
     /// <summary>
     /// Backtesting result handler passes messages back from the Lean to the User.
     /// </summary>
-    public class BacktestingResultHandler : IResultHandler
+    public class BacktestingResultHandler : BaseResultsHandler, IResultHandler
     {
-        private bool _exitTriggered = false;
+        // used for resetting out/error upon completion
+        private static readonly TextWriter StandardOut = Console.Out;
+        private static readonly TextWriter StandardError = Console.Error;
+        private const double Samples = 4000;
+        private const double MinimumSamplePeriod = 4;
+
         private BacktestNodePacket _job;
-        private int _jobDays = 0;
-        private string _compileId = "";
-        private string _backtestId = "";
-        private DateTime _nextUpdate = new DateTime();
-        private DateTime _nextS3Update = new DateTime();
-        DateTime _lastUpdate = new DateTime();
-        private string _debugMessage = "";
-        private List<string> _log = new List<string>();
-        private string _errorMessage = "";
-        private IAlgorithm _algorithm;
-        private ConcurrentQueue<Packet> _messages;
-        private ConcurrentDictionary<string, Chart> _charts;
-        private bool _isActive = true;
-        private object _chartLock = new Object();
-        private object _runtimeLock = new Object();
-        private readonly Dictionary<string, string> _runtimeStatistics = new Dictionary<string, string>();
-        private double _daysProcessed = 0;
-        private double _lastDaysProcessed = 1;
-        private bool _processingFinalPacket = false;
-
-        //Debug variables:
-        private int _debugMessageCount = 0;
-        private int _debugMessageMin = 100;
-        private int _debugMessageMax = 10;
-        private int _debugMessageLength = 200;
-        private string _debugMessagePeriod = "day";
-
-        //Sampling Periods:
-        private TimeSpan _resamplePeriod = TimeSpan.FromMinutes(4);
-        private TimeSpan _notificationPeriod = TimeSpan.FromSeconds(2);
+        private int _jobDays;
+        private DateTime _nextUpdate;
+        private DateTime _nextS3Update;
+        private string _errorMessage;
+        private double _daysProcessed;
+        private double _daysProcessedFrontier;
+        private readonly HashSet<string> _chartSeriesExceededDataPoints;
 
         //Processing Time:
-        private DateTime _startTime;
         private DateTime _nextSample;
-        private IMessagingHandler _messagingHandler;
-        private IApi _api;
-        private ITransactionHandler _transactionHandler;
-        private ISetupHandler _setupHandler;
-
-        private const double _samples = 4000;
-        private const double _minimumSamplePeriod = 4;
-
-        /// <summary>
-        /// Packeting message queue to temporarily store packets and then pull for processing.
-        /// </summary>
-        public ConcurrentQueue<Packet> Messages 
-        {
-            get
-            {
-                return _messages;
-            }
-            set 
-            {
-                _messages = value;
-            }
-        }
-
-        /// <summary>
-        /// Local object access to the algorithm for the underlying Debug and Error messaging.
-        /// </summary>
-        public IAlgorithm Algorithm 
-        {
-            get
-            {
-                return _algorithm;
-            }
-            set
-            {
-                _algorithm = value;
-            }
-        }
-
-        /// <summary>
-        /// Charts collection for storing the master copy of user charting data.
-        /// </summary>
-        public ConcurrentDictionary<string, Chart> Charts 
-        {
-            get
-            {
-                return _charts;
-            }
-            set
-            {
-                _charts = value;
-            }
-        }
-
-        /// <summary>
-        /// Boolean flag indicating the result hander thread is completely finished and ready to dispose.
-        /// </summary>
-        public bool IsActive 
-        { 
-            get
-            {
-                return _isActive;
-            }
-        }
-
-
-
-        /// <summary>
-        /// Sampling period for timespans between resamples of the charting equity.
-        /// </summary>
-        /// <remarks>Specifically critical for backtesting since with such long timeframes the sampled data can get extreme.</remarks>
-        public TimeSpan ResamplePeriod
-        {
-            get 
-            {
-                return _resamplePeriod;
-            }
-        }
-
-        /// <summary>
-        /// How frequently the backtests push messages to the browser.
-        /// </summary>
-        /// <remarks>Update frequency of notification packets</remarks>
-        public TimeSpan NotificationPeriod
-        {
-            get 
-            {
-                return _notificationPeriod;
-            }
-        }
+        private string _algorithmId;
+        private int _projectId;
 
         /// <summary>
         /// A dictionary containing summary statistics
@@ -172,22 +62,17 @@ namespace QuantConnect.Lean.Engine.Results
         public Dictionary<string, string> FinalStatistics { get; private set; }
 
         /// <summary>
-        /// Default initializer for 
+        /// Creates a new instance
         /// </summary>
         public BacktestingResultHandler()
         {
-            //Initialize Properties:
-            _messages = new ConcurrentQueue<Packet>();
-            _charts = new ConcurrentDictionary<string, Chart>();
-            _chartLock = new Object();
-            _isActive = true;
+            ResamplePeriod = TimeSpan.FromMinutes(4);
+            NotificationPeriod = TimeSpan.FromSeconds(2);
 
-            //Notification Period for Browser Pushes:
-            _notificationPeriod = TimeSpan.FromSeconds(2);
-            _exitTriggered = false;
+            _chartSeriesExceededDataPoints = new HashSet<string>();
 
-            //Set the start time for the algorithm
-            _startTime = DateTime.Now;
+            // Delay uploading first packet
+            _nextS3Update = StartTime.AddSeconds(30);
 
             //Default charts:
             Charts.AddOrUpdate("Strategy Equity", new Chart("Strategy Equity"));
@@ -201,37 +86,24 @@ namespace QuantConnect.Lean.Engine.Results
         /// <param name="job">Algorithm job packet for this result handler</param>
         /// <param name="messagingHandler">The handler responsible for communicating messages to listeners</param>
         /// <param name="api">The api instance used for handling logs</param>
-        /// <param name="dataFeed"></param>
-        /// <param name="setupHandler"></param>
-        /// <param name="transactionHandler"></param>
-        public void Initialize(AlgorithmNodePacket job, IMessagingHandler messagingHandler, IApi api, IDataFeed dataFeed, ISetupHandler setupHandler, ITransactionHandler transactionHandler)
+        /// <param name="transactionHandler">The transaction handler used to get the algorithms <see cref="Order"/> information</param>
+        public override void Initialize(AlgorithmNodePacket job, IMessagingHandler messagingHandler, IApi api, ITransactionHandler transactionHandler)
         {
-            _api = api;
-            _messagingHandler = messagingHandler;
-            _transactionHandler = transactionHandler;
-            _setupHandler = setupHandler;
+            _algorithmId = job.AlgorithmId;
+            _projectId = job.ProjectId;
             _job = (BacktestNodePacket)job;
             if (_job == null) throw new Exception("BacktestingResultHandler.Constructor(): Submitted Job type invalid.");
-            _compileId = _job.CompileId;
-            _backtestId = _job.BacktestId;
+            base.Initialize(job, messagingHandler, api, transactionHandler);
         }
-        
+
         /// <summary>
         /// The main processing method steps through the messaging queue and processes the messages one by one.
         /// </summary>
-        public void Run() 
+        protected override void Run()
         {
-            //Initialize:
-            var lastMessage = "";
-            _lastDaysProcessed = 5;
-
-            //Setup minimum result arrays:
-            //SampleEquity(job.periodStart, job.startingCapital);
-            //SamplePerformance(job.periodStart, 0);
-
             try
             {
-                while (!(_exitTriggered && Messages.Count == 0))
+                while (!(ExitTriggered && Messages.Count == 0))
                 {
                     //While there's no work to do, go back to the algorithm:
                     if (Messages.Count == 0)
@@ -244,7 +116,7 @@ namespace QuantConnect.Lean.Engine.Results
                         Packet packet;
                         if (Messages.TryDequeue(out packet))
                         {
-                            _messagingHandler.Send(packet);
+                            MessagingHandler.Send(packet);
                         }
                     }
 
@@ -258,51 +130,40 @@ namespace QuantConnect.Lean.Engine.Results
                 // unexpected error, we need to close down shop
                 Log.Error(err);
                 // quit the algorithm due to error
-                _algorithm.RunTimeError = err;
+                Algorithm.RunTimeError = err;
             }
 
             Log.Trace("BacktestingResultHandler.Run(): Ending Thread...");
-            _isActive = false;
+
+            // reset standard out/error
+            Console.SetOut(StandardOut);
+            Console.SetError(StandardError);
         } // End Run();
 
         /// <summary>
         /// Send a backtest update to the browser taking a latest snapshot of the charting data.
         /// </summary>
-        public void Update() 
+        private void Update()
         {
             try
             {
                 //Sometimes don't run the update, if not ready or we're ending.
-                if (Algorithm == null || Algorithm.Transactions == null || _processingFinalPacket)
+                if (Algorithm?.Transactions == null || ExitTriggered)
                 {
                     return;
                 }
 
-                if (DateTime.Now <= _nextUpdate || !(_daysProcessed > (_lastDaysProcessed + 1))) return;
+                if (DateTime.UtcNow <= _nextUpdate || _daysProcessed < _daysProcessedFrontier) return;
 
-                //Extract the orders since last update
-                var deltaOrders = new Dictionary<int, Order>();
-
-                try
-                {
-                    deltaOrders = (from order in _transactionHandler.Orders
-                        where order.Value.Time.Date >= _lastUpdate && order.Value.Status == OrderStatus.Filled
-                        select order).ToDictionary(t => t.Key, t => t.Value);
-                }
-                catch (Exception err)
-                {
-                    Log.Error(err, "Transactions");
-                }
-
-                //Limit length of orders we pass back dynamically to avoid flooding.
-                if (deltaOrders.Count > 50) deltaOrders.Clear();
+                var deltaOrders = GetDeltaOrders(LastDeltaOrderPosition, shouldStop: orderCount => orderCount >= 50);
+                // Deliberately skip to the end of order event collection to prevent overloading backtesting UX
+                LastDeltaOrderPosition = TransactionHandler.OrderEvents.Count();
 
                 //Reset loop variables:
                 try
                 {
-                    _lastUpdate = Algorithm.Time.Date;
-                    _lastDaysProcessed = _daysProcessed;
-                    _nextUpdate = DateTime.Now.AddSeconds(0.5);
+                    _daysProcessedFrontier = _daysProcessed + 1;
+                    _nextUpdate = DateTime.UtcNow.AddSeconds(3);
                 }
                 catch (Exception err)
                 {
@@ -310,42 +171,65 @@ namespace QuantConnect.Lean.Engine.Results
                 }
 
                 var deltaCharts = new Dictionary<string, Chart>();
-                lock (_chartLock)
+
+                var performanceCharts = new Dictionary<string, Chart>();
+                lock (ChartLock)
                 {
                     //Get the updates since the last chart
-                    foreach (var chart in Charts.Values) 
+                    foreach (var kvp in Charts)
                     {
-                        deltaCharts.Add(chart.Name, chart.GetUpdates());
+                        var chart = kvp.Value;
+
+                        var updates = chart.GetUpdates();
+                        if (!updates.IsEmpty())
+                        {
+                            deltaCharts.Add(chart.Name, updates);
+                        }
+
+                        if (AlgorithmPerformanceCharts.Contains(kvp.Key))
+                        {
+                            performanceCharts[kvp.Key] = chart.Clone();
+                        }
                     }
                 }
 
                 //Get the runtime statistics from the user algorithm:
                 var runtimeStatistics = new Dictionary<string, string>();
-                lock (_runtimeLock)
+                lock (RuntimeStatistics)
                 {
-                    foreach (var pair in _runtimeStatistics)
+                    foreach (var pair in RuntimeStatistics)
                     {
                         runtimeStatistics.Add(pair.Key, pair.Value);
                     }
                 }
-                runtimeStatistics.Add("Unrealized", "$" + _algorithm.Portfolio.TotalUnrealizedProfit.ToString("N2"));
-                runtimeStatistics.Add("Fees", "-$" + _algorithm.Portfolio.TotalFees.ToString("N2"));
-                runtimeStatistics.Add("Net Profit", "$" + _algorithm.Portfolio.TotalProfit.ToString("N2"));
-                runtimeStatistics.Add("Return", ((_algorithm.Portfolio.TotalPortfolioValue - _setupHandler.StartingPortfolioValue) / _setupHandler.StartingPortfolioValue).ToString("P"));
-                runtimeStatistics.Add("Equity", "$" + _algorithm.Portfolio.TotalPortfolioValue.ToString("N2"));
+                var summary = GenerateStatisticsResults(performanceCharts).Summary;
+                GetAlgorithmRuntimeStatistics(summary, runtimeStatistics);
 
                 //Profit Loss Changes:
                 var progress = Convert.ToDecimal(_daysProcessed / _jobDays);
                 if (progress > 0.999m) progress = 0.999m;
 
                 //1. Cloud Upload -> Upload the whole packet to S3  Immediately:
-                var completeResult = new BacktestResult(Charts, _transactionHandler.Orders, Algorithm.Transactions.TransactionRecord, new Dictionary<string, string>(), runtimeStatistics, new Dictionary<string, AlgorithmPerformance>());
-                var complete = new BacktestResultPacket(_job, completeResult, progress);
-
-                if (DateTime.Now > _nextS3Update)
+                if (DateTime.UtcNow > _nextS3Update)
                 {
-                    _nextS3Update = DateTime.Now.AddSeconds(30);
-                    StoreResult(complete, false);
+                    // For intermediate backtesting results, we truncate the order list to include only the last 100 orders
+                    // The final packet will contain the full list of orders.
+                    const int maxOrders = 100;
+                    var orderCount = TransactionHandler.Orders.Count;
+
+                    var completeResult = new BacktestResult(new BacktestResultParameters(
+                        Charts,
+                        orderCount > maxOrders ? TransactionHandler.Orders.Skip(orderCount - maxOrders).ToDictionary() : TransactionHandler.Orders.ToDictionary(),
+                        Algorithm.Transactions.TransactionRecord,
+                        new Dictionary<string, string>(),
+                        runtimeStatistics,
+                        new Dictionary<string, AlgorithmPerformance>(),
+                        // we store the last 100 order events, the final packet will contain the full list
+                        TransactionHandler.OrderEvents.Reverse().Take(100).ToList()));
+
+                    StoreResult(new BacktestResultPacket(_job, completeResult, Algorithm.EndDate, Algorithm.StartDate, progress));
+
+                    _nextS3Update = DateTime.UtcNow.AddSeconds(30);
                 }
 
                 //2. Backtest Update -> Send the truncated packet to the backtester:
@@ -353,7 +237,7 @@ namespace QuantConnect.Lean.Engine.Results
 
                 foreach (var backtestingPacket in splitPackets)
                 {
-                    _messagingHandler.Send(backtestingPacket);
+                    MessagingHandler.Send(backtestingPacket);
                 }
             }
             catch (Exception err)
@@ -365,26 +249,33 @@ namespace QuantConnect.Lean.Engine.Results
         /// <summary>
         /// Run over all the data and break it into smaller packets to ensure they all arrive at the terminal
         /// </summary>
-        public IEnumerable<BacktestResultPacket> SplitPackets(Dictionary<string, Chart> deltaCharts, Dictionary<int, Order> deltaOrders, Dictionary<string,string> runtimeStatistics, decimal progress)
+        public IEnumerable<BacktestResultPacket> SplitPackets(Dictionary<string, Chart> deltaCharts, Dictionary<int, Order> deltaOrders, Dictionary<string, string> runtimeStatistics, decimal progress)
         {
             // break the charts into groups
             var splitPackets = new List<BacktestResultPacket>();
             foreach (var chart in deltaCharts.Values)
             {
-                //Don't add packet if the series is empty:
-                if (chart.Series.Values.Sum(x => x.Values.Count) == 0) continue;
-
-                splitPackets.Add(new BacktestResultPacket(_job, new BacktestResult { Charts = new Dictionary<string, Chart>()
+                splitPackets.Add(new BacktestResultPacket(_job, new BacktestResult
                 {
-                    {chart.Name,chart}
-                }  }, progress));
+                    Charts = new Dictionary<string, Chart>
+                    {
+                        {chart.Name, chart}
+                    }
+                }, Algorithm.EndDate, Algorithm.StartDate, progress));
             }
 
-            // Add the orders into the charting packet:
-            splitPackets.Add(new BacktestResultPacket(_job, new BacktestResult { Orders = deltaOrders }, progress));
+            // Send alpha run time statistics
+            splitPackets.Add(new BacktestResultPacket(_job, new BacktestResult { AlphaRuntimeStatistics = AlphaRuntimeStatistics }, Algorithm.EndDate, Algorithm.StartDate, progress));
+
+            // only send orders if there is actually any update
+            if (deltaOrders.Count > 0)
+            {
+                // Add the orders into the charting packet:
+                splitPackets.Add(new BacktestResultPacket(_job, new BacktestResult { Orders = deltaOrders }, Algorithm.EndDate, Algorithm.StartDate, progress));
+            }
 
             //Add any user runtime statistics into the backtest.
-            splitPackets.Add(new BacktestResultPacket(_job, new BacktestResult { RuntimeStatistics = runtimeStatistics }, progress));
+            splitPackets.Add(new BacktestResultPacket(_job, new BacktestResult { RuntimeStatistics = runtimeStatistics }, Algorithm.EndDate, Algorithm.StartDate, progress));
 
             return splitPackets;
         }
@@ -393,39 +284,44 @@ namespace QuantConnect.Lean.Engine.Results
         /// Save the snapshot of the total results to storage.
         /// </summary>
         /// <param name="packet">Packet to store.</param>
-        /// <param name="async">Store the packet asyncronously to speed up the thread.</param>
-        /// <remarks>Async creates crashes in Mono 3.10 if the thread disappears before the upload is complete so it is disabled for now.</remarks>
-        public void StoreResult(Packet packet, bool async = false)
+        protected override void StoreResult(Packet packet)
         {
-            //Initialize:
-            var serialized = "";
-            var key = "";
-
             try
             {
-                lock (_chartLock)
+                // Make sure this is the right type of packet:
+                if (packet.Type != PacketType.BacktestResult) return;
+
+                // Port to packet format:
+                var result = packet as BacktestResultPacket;
+
+                if (result != null)
                 {
-                    //1. Make sure this is the right type of packet:
-                    if (packet.Type != PacketType.BacktestResult) return;
+                    // Get Storage Location:
+                    var key = $"{AlgorithmId}.json";
 
-                    //2. Port to packet format:
-                    var result = packet as BacktestResultPacket;
-
-                    if (result != null)
+                    BacktestResult results;
+                    lock (ChartLock)
                     {
-                        //3. Get Storage Location:
-                        key = "backtests/" + _job.UserId + "/" + _job.ProjectId + "/" + _job.BacktestId + ".json";
-
-                        //4. Serialize to JSON:
-                        serialized = JsonConvert.SerializeObject(result.Results);
+                        results = new BacktestResult(new BacktestResultParameters(
+                            result.Results.Charts.ToDictionary(x => x.Key, x => x.Value.Clone()),
+                            result.Results.Orders,
+                            result.Results.ProfitLoss,
+                            result.Results.Statistics,
+                            result.Results.RuntimeStatistics,
+                            result.Results.RollingWindow,
+                            null, // null order events, we store them separately
+                            result.Results.TotalPerformance,
+                            result.Results.AlphaRuntimeStatistics));
                     }
-                    else 
-                    {
-                        Log.Error("BacktestingResultHandler.StoreResult(): Result Null.");
-                    }
+                    // Save results
+                    SaveResults(key, results);
 
-                    //Upload Results Portion
-                    _api.Store(serialized, key, StoragePermissions.Authenticated, async);
+                    // Store Order Events in a separate file
+                    StoreOrderEvents(Algorithm.UtcTime, result.Results.OrderEvents);
+                }
+                else
+                {
+                    Log.Error("BacktestingResultHandler.StoreResult(): Result Null.");
                 }
             }
             catch (Exception err)
@@ -437,34 +333,31 @@ namespace QuantConnect.Lean.Engine.Results
         /// <summary>
         /// Send a final analysis result back to the IDE.
         /// </summary>
-        /// <param name="job">Lean AlgorithmJob task</param>
-        /// <param name="orders">Collection of orders from the algorithm</param>
-        /// <param name="profitLoss">Collection of time-profit values for the algorithm</param>
-        /// <param name="holdings">Current holdings state for the algorithm</param>
-        /// <param name="statisticsResults">Statistics information for the algorithm (empty if not finished)</param>
-        /// <param name="banner">Runtime statistics banner information</param>
-        public void SendFinalResult(AlgorithmNodePacket job, Dictionary<int, Order> orders, Dictionary<DateTime, decimal> profitLoss, Dictionary<string, Holding> holdings, StatisticsResults statisticsResults, Dictionary<string, string> banner)
-        { 
+        protected void SendFinalResult()
+        {
             try
             {
-                FinalStatistics = statisticsResults.Summary;
-
                 //Convert local dictionary:
                 var charts = new Dictionary<string, Chart>(Charts);
-                _processingFinalPacket = true;
+                var orders = new Dictionary<int, Order>(TransactionHandler.Orders);
+                var profitLoss = new SortedDictionary<DateTime, decimal>(Algorithm.Transactions.TransactionRecord);
+                var statisticsResults = GenerateStatisticsResults(charts, profitLoss);
+                var runtime = GetAlgorithmRuntimeStatistics(statisticsResults.Summary);
+
+                FinalStatistics = statisticsResults.Summary;
 
                 // clear the trades collection before placing inside the backtest result
                 foreach (var ap in statisticsResults.RollingPerformances.Values)
                 {
                     ap.ClosedTrades.Clear();
                 }
-
+                var orderEvents = TransactionHandler.OrderEvents.ToList();
                 //Create a result packet to send to the browser.
-                var result = new BacktestResultPacket((BacktestNodePacket) job,
-                    new BacktestResult(charts, orders, profitLoss, statisticsResults.Summary, banner, statisticsResults.RollingPerformances, statisticsResults.TotalPerformance)
-                    , 1m)
+                var result = new BacktestResultPacket(_job,
+                    new BacktestResult(new BacktestResultParameters(charts, orders, profitLoss, statisticsResults.Summary, runtime, statisticsResults.RollingPerformances, orderEvents, statisticsResults.TotalPerformance, AlphaRuntimeStatistics)),
+                    Algorithm.EndDate, Algorithm.StartDate)
                 {
-                    ProcessingTime = (DateTime.Now - _startTime).TotalSeconds,
+                    ProcessingTime = (DateTime.UtcNow - StartTime).TotalSeconds,
                     DateFinished = DateTime.Now,
                     Progress = 1
                 };
@@ -473,10 +366,10 @@ namespace QuantConnect.Lean.Engine.Results
                 StoreResult(result);
 
                 //Second, send the truncated packet:
-                _messagingHandler.Send(result);
+                MessagingHandler.Send(result);
 
-                Log.Trace("BacktestingResultHandler.SendAnalysisResult(): Processed final packet"); 
-            } 
+                Log.Trace("BacktestingResultHandler.SendAnalysisResult(): Processed final packet");
+            }
             catch (Exception err)
             {
                 Log.Error(err);
@@ -487,31 +380,32 @@ namespace QuantConnect.Lean.Engine.Results
         /// Set the Algorithm instance for ths result.
         /// </summary>
         /// <param name="algorithm">Algorithm we're working on.</param>
+        /// <param name="startingPortfolioValue">Algorithm starting capital for statistics calculations</param>
         /// <remarks>While setting the algorithm the backtest result handler.</remarks>
-        public void SetAlgorithm(IAlgorithm algorithm)
+        public virtual void SetAlgorithm(IAlgorithm algorithm, decimal startingPortfolioValue)
         {
-            _algorithm = algorithm;
+            Algorithm = algorithm;
+            StartingPortfolioValue = startingPortfolioValue;
+            PreviousUtcSampleTime = Algorithm.UtcTime;
+            DailyPortfolioValue = StartingPortfolioValue;
 
             //Get the resample period:
-            var totalMinutes = (_job.PeriodFinish - _job.PeriodStart).TotalMinutes;
-            var resampleMinutes = (totalMinutes < (_minimumSamplePeriod * _samples)) ? _minimumSamplePeriod : (totalMinutes / _samples); // Space out the sampling every 
-            _resamplePeriod = TimeSpan.FromMinutes(resampleMinutes);
-            Log.Trace("BacktestingResultHandler(): Sample Period Set: " + resampleMinutes.ToString("00.00"));
-            
-            //Setup the sampling periods:
-            _jobDays = Time.TradeableDates(Algorithm.Securities.Values, _job.PeriodStart, _job.PeriodFinish);
+            var totalMinutes = (algorithm.EndDate - algorithm.StartDate).TotalMinutes;
+            var resampleMinutes = totalMinutes < MinimumSamplePeriod * Samples ? MinimumSamplePeriod : totalMinutes / Samples; // Space out the sampling every
+            ResamplePeriod = TimeSpan.FromMinutes(resampleMinutes);
+            Log.Trace("BacktestingResultHandler(): Sample Period Set: " + resampleMinutes.ToStringInvariant("00.00"));
 
-            //Setup Debug Messaging:
-            _debugMessageMax = Convert.ToInt32(10 * _jobDays);
-            //Minimum 100 messages per backtest:
-            if (_debugMessageMax < _debugMessageMin) _debugMessageMax = _debugMessageMin;
-            //Messaging for the log messages:
-            _debugMessagePeriod = "backtest";
+            //Setup the sampling periods:
+            _jobDays = Algorithm.Securities.Count > 0
+                ? Time.TradeableDates(Algorithm.Securities.Values, algorithm.StartDate, algorithm.EndDate)
+                : Convert.ToInt32((algorithm.EndDate.Date - algorithm.StartDate.Date).TotalDays) + 1;
 
             //Set the security / market types.
             var types = new List<SecurityType>();
-            foreach (var security in _algorithm.Securities.Values)
+            foreach (var kvp in Algorithm.Securities)
             {
+                var security = kvp.Value;
+
                 if (!types.Contains(security.Type)) types.Add(security.Type);
             }
             SecurityType(types);
@@ -519,10 +413,14 @@ namespace QuantConnect.Lean.Engine.Results
             if (Config.GetBool("forward-console-messages", true))
             {
                 // we need to forward Console.Write messages to the algorithm's Debug function
-                var debug = new FuncTextWriter(algorithm.Debug);
-                var error = new FuncTextWriter(algorithm.Error);
-                Console.SetOut(debug);
-                Console.SetError(error);
+                Console.SetOut(new FuncTextWriter(algorithm.Debug));
+                Console.SetError(new FuncTextWriter(algorithm.Error));
+            }
+            else
+            {
+                // we need to forward Console.Write messages to the standard Log functions
+                Console.SetOut(new FuncTextWriter(msg => Log.Trace(msg)));
+                Console.SetError(new FuncTextWriter(msg => Log.Error(msg)));
             }
         }
 
@@ -530,16 +428,10 @@ namespace QuantConnect.Lean.Engine.Results
         /// Send a debug message back to the browser console.
         /// </summary>
         /// <param name="message">Message we'd like shown in console.</param>
-        public void DebugMessage(string message) 
+        public void DebugMessage(string message)
         {
-            Messages.Enqueue(new DebugPacket(_job.ProjectId, _backtestId, _compileId, message));
-
-            //Save last message sent:
-            if (_algorithm != null)
-            {
-                _log.Add(_algorithm.Time.ToString(DateFormat.UI) + " " + message);
-            }
-            _debugMessage = message;
+            Messages.Enqueue(new DebugPacket(_projectId, AlgorithmId, CompileId, message));
+            AddToLogStore(message);
         }
 
         /// <summary>
@@ -548,14 +440,8 @@ namespace QuantConnect.Lean.Engine.Results
         /// <param name="message">Message we'd like shown in console.</param>
         public void SystemDebugMessage(string message)
         {
-            Messages.Enqueue(new SystemDebugPacket(_job.ProjectId, _backtestId, _compileId, message));
-
-            //Save last message sent:
-            if (_algorithm != null)
-            {
-                _log.Add(_algorithm.Time.ToString(DateFormat.UI) + " " + message);
-            }
-            _debugMessage = message;
+            Messages.Enqueue(new SystemDebugPacket(_projectId, AlgorithmId, CompileId, message));
+            AddToLogStore(message);
         }
 
         /// <summary>
@@ -564,11 +450,19 @@ namespace QuantConnect.Lean.Engine.Results
         /// <param name="message">Message we'd in the log.</param>
         public void LogMessage(string message)
         {
-            Messages.Enqueue(new LogPacket(_backtestId, message));
+            Messages.Enqueue(new LogPacket(AlgorithmId, message));
+            AddToLogStore(message);
+        }
 
-            if (_algorithm != null)
+        protected override void AddToLogStore(string message)
+        {
+            lock (LogStore)
             {
-                _log.Add(_algorithm.Time.ToString(DateFormat.UI) + " " + message);
+                var messageToLog = Algorithm != null
+                    ? new LogEntry(Algorithm.Time.ToStringInvariant(DateFormat.UI) + " " + message)
+                    : new LogEntry("Algorithm Initialization: " + message);
+
+                LogStore.Add(messageToLog);
             }
         }
 
@@ -589,23 +483,23 @@ namespace QuantConnect.Lean.Engine.Results
         /// </summary>
         /// <param name="message">Error message we'd like shown in console.</param>
         /// <param name="stacktrace">Stacktrace information string</param>
-        public void ErrorMessage(string message, string stacktrace = "") 
+        public void ErrorMessage(string message, string stacktrace = "")
         {
             if (message == _errorMessage) return;
             if (Messages.Count > 500) return;
-            Messages.Enqueue(new HandledErrorPacket(_backtestId, message, stacktrace));
+            Messages.Enqueue(new HandledErrorPacket(AlgorithmId, message, stacktrace));
             _errorMessage = message;
         }
 
         /// <summary>
-        /// Send a runtime error message back to the browser highlighted with in red 
+        /// Send a runtime error message back to the browser highlighted with in red
         /// </summary>
         /// <param name="message">Error message.</param>
         /// <param name="stacktrace">Stacktrace information string</param>
-        public void RuntimeError(string message, string stacktrace = "") 
+        public void RuntimeError(string message, string stacktrace = "")
         {
             PurgeQueue();
-            Messages.Enqueue(new RuntimeErrorPacket(_job.UserId, _backtestId, message, stacktrace));
+            Messages.Enqueue(new RuntimeErrorPacket(_job.UserId, AlgorithmId, message, stacktrace));
             _errorMessage = message;
         }
 
@@ -619,9 +513,15 @@ namespace QuantConnect.Lean.Engine.Results
         /// <param name="time">Time for the sample</param>
         /// <param name="unit">Unit of the sample</param>
         /// <param name="value">Value for the chart sample.</param>
-        public void Sample(string chartName, string seriesName, int seriesIndex, SeriesType seriesType, DateTime time, decimal value, string unit = "$") 
+        protected override void Sample(string chartName, string seriesName, int seriesIndex, SeriesType seriesType, DateTime time, decimal value, string unit = "$")
         {
-            lock (_chartLock)
+            // Sampling during warming up period skews statistics
+            if (Algorithm.IsWarmingUp)
+            {
+                return;
+            }
+
+            lock (ChartLock)
             {
                 //Add a copy locally:
                 Chart chart;
@@ -652,169 +552,133 @@ namespace QuantConnect.Lean.Engine.Results
         /// </summary>
         /// <param name="time">Current backtest time.</param>
         /// <param name="value">Current equity value.</param>
-        public void SampleEquity(DateTime time, decimal value) 
+        protected override void SampleEquity(DateTime time, decimal value)
         {
-            //Sample the Equity Value:
-            Sample("Strategy Equity", "Equity", 0, SeriesType.Candle, time, value, "$");
+            base.SampleEquity(time, value);
 
             //Recalculate the days processed:
-            _daysProcessed = (time - _job.PeriodStart).TotalDays;
-        }
-
-        /// <summary>
-        /// Sample the current daily performance directly with a time-value pair.
-        /// </summary>
-        /// <param name="time">Current backtest date.</param>
-        /// <param name="value">Current daily performance value.</param>
-        public void SamplePerformance(DateTime time, decimal value) 
-        {
-            //Added a second chart to equity plot - daily perforamnce:
-            Sample("Strategy Equity", "Daily Performance", 1, SeriesType.Bar, time, value, "%");
-        }
-
-        /// <summary>
-        /// Sample the current benchmark performance directly with a time-value pair.
-        /// </summary>
-        /// <param name="time">Current backtest date.</param>
-        /// <param name="value">Current benchmark value.</param>
-        /// <seealso cref="IResultHandler.Sample"/>
-        public void SampleBenchmark(DateTime time, decimal value)
-        {
-            Sample("Benchmark", "Benchmark", 0, SeriesType.Line, time, value, "$");
+            _daysProcessed = (time - Algorithm.StartDate).TotalDays;
         }
 
         /// <summary>
         /// Add a range of samples from the users algorithms to the end of our current list.
         /// </summary>
         /// <param name="updates">Chart updates since the last request.</param>
-        public void SampleRange(List<Chart> updates) 
+        protected void SampleRange(List<Chart> updates)
         {
-            lock (_chartLock) 
+            lock (ChartLock)
             {
-                foreach (var update in updates) 
+                foreach (var update in updates)
                 {
                     //Create the chart if it doesn't exist already:
-                    if (!Charts.ContainsKey(update.Name)) 
+                    Chart chart;
+                    if (!Charts.TryGetValue(update.Name, out chart))
                     {
-                        Charts.AddOrUpdate(update.Name, new Chart(update.Name));
+                        chart = new Chart(update.Name);
+                        Charts.AddOrUpdate(update.Name, chart);
                     }
 
-                    //Add these samples to this chart.
-                    foreach (var series in update.Series.Values) 
-                    {
-                        //If we don't already have this record, its the first packet
-                        if (!Charts[update.Name].Series.ContainsKey(series.Name))
-                        {
-                            Charts[update.Name].Series.Add(series.Name, new Series(series.Name, series.SeriesType, series.Index, series.Unit)
-                            {
-                                Color = series.Color, ScatterMarkerSymbol = series.ScatterMarkerSymbol
-                            });
-                        }
+                    // for alpha assets chart, we always create a new series instance (step on previous value)
+                    var forceNewSeries = update.Name == ChartingInsightManagerExtension.AlphaAssets;
 
-                        //We already have this record, so just the new samples to the end:
-                        Charts[update.Name].Series[series.Name].Values.AddRange(series.Values);
+                    //Add these samples to this chart.
+                    foreach (var series in update.Series.Values)
+                    {
+                        if (series.Values.Count > 0)
+                        {
+                            var thisSeries = chart.TryAddAndGetSeries(series.Name, series.SeriesType, series.Index,
+                                series.Unit, series.Color, series.ScatterMarkerSymbol,
+                                forceNewSeries);
+                            if (series.SeriesType == SeriesType.Pie)
+                            {
+                                var dataPoint = series.ConsolidateChartPoints();
+                                if (dataPoint != null)
+                                {
+                                    thisSeries.AddPoint(dataPoint);
+                                }
+                            }
+                            else
+                            {
+                                var values = thisSeries.Values;
+                                if ((values.Count + series.Values.Count) <= _job.Controls.MaximumDataPointsPerChartSeries) // check chart data point limit first
+                                {
+                                    //We already have this record, so just the new samples to the end:
+                                    values.AddRange(series.Values);
+                                }
+                                else if (!_chartSeriesExceededDataPoints.Contains(chart.Name + series.Name))
+                                {
+                                    _chartSeriesExceededDataPoints.Add(chart.Name + series.Name);
+                                    DebugMessage($"Exceeded maximum data points per series, chart update skipped. Chart Name {update.Name}. Series name {series.Name}. " +
+                                                 $"Limit is currently set at {_job.Controls.MaximumDataPointsPerChartSeries}");
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
 
         /// <summary>
-        /// Terminate the result thread and apply any required exit procedures.
+        /// Terminate the result thread and apply any required exit procedures like sending final results.
         /// </summary>
-        public void Exit() 
+        public virtual void Exit()
         {
             // Only process the logs once
-            if (!_exitTriggered)
+            if (!ExitTriggered)
             {
-                var logLocation = ProcessLogMessages(_job);
+                List<LogEntry> copy;
+                lock (LogStore)
+                {
+                    copy = LogStore.ToList();
+                }
+                ProcessSynchronousEvents(true);
+                var logLocation = SaveLogs(_algorithmId, copy);
                 SystemDebugMessage("Your log was successfully created and can be retrieved from: " + logLocation);
+
+                // Set exit flag, update task will send any message before stopping
+                ExitTriggered = true;
+
+                StopUpdateRunner();
+
+                SendFinalResult();
             }
-
-            //Set exit flag, and wait for the messages to send:
-            _exitTriggered = true;
         }
-
-        /// <summary>
-        /// Send a new order event to the browser.
-        /// </summary>
-        /// <remarks>In backtesting the order events are not sent because it would generate a high load of messaging.</remarks>
-        /// <param name="newEvent">New order event details</param>
-        public void OrderEvent(OrderEvent newEvent)
-        { 
-            // NOP. Don't do any order event processing for results in backtest mode.
-        }
-
 
         /// <summary>
         /// Send an algorithm status update to the browser.
         /// </summary>
         /// <param name="status">Status enum value.</param>
         /// <param name="message">Additional optional status message.</param>
-        /// <remarks>In backtesting we do not send the algorithm status updates.</remarks>
-        public void SendStatusUpdate(AlgorithmStatus status, string message = "")
-        { 
-            //NOP. Don't send status for backtests
-        }
-
-        /// <summary>
-        /// Sample the asset prices to generate plots.
-        /// </summary>
-        /// <param name="symbol">Symbol we're sampling.</param>
-        /// <param name="time">Time of sample</param>
-        /// <param name="value">Value of the asset price</param>
-        public void SampleAssetPrices(Symbol symbol, DateTime time, decimal value)
+        public virtual void SendStatusUpdate(AlgorithmStatus status, string message = "")
         {
-            //NOP. Don't sample asset prices in console.
+            var statusPacket = new AlgorithmStatusPacket(_algorithmId, _projectId, status, message);
+            MessagingHandler.Send(statusPacket);
         }
 
         /// <summary>
-        /// Purge/clear any outstanding messages in message queue.
-        /// </summary>
-        public void PurgeQueue() 
-        {
-            Messages.Clear();
-        }
-
-        /// <summary>
-        /// Set the current runtime statistics of the algorithm. 
+        /// Set the current runtime statistics of the algorithm.
         /// These are banner/title statistics which show at the top of the live trading results.
         /// </summary>
         /// <param name="key">Runtime headline statistic name</param>
         /// <param name="value">Runtime headline statistic value</param>
         public void RuntimeStatistic(string key, string value)
         {
-            lock (_runtimeLock)
+            lock (RuntimeStatistics)
             {
-                _runtimeStatistics[key] = value;
+                RuntimeStatistics[key] = value;
             }
         }
 
         /// <summary>
-        /// Process log messages and return a string indicating the location of the logs
-        /// </summary>
-        /// <param name="job">Algorithm job/task packet</param>
-        /// <returns>String URL of log</returns>
-        private string ProcessLogMessages(AlgorithmNodePacket job)
-        {
-            return _api.StoreLogs(_log, job, StoragePermissions.Public, false);
-        }
-
-        /// <summary>
-        /// Set the chart subscription we want data for. Not used in backtesting.
-        /// </summary>
-        public void SetChartSubscription(string symbol)
-        {
-            //NOP.
-        }
-
-        /// <summary>
-        /// Process the synchronous result events, sampling and message reading. 
+        /// Process the synchronous result events, sampling and message reading.
         /// This method is triggered from the algorithm manager thread.
         /// </summary>
         /// <remarks>Prime candidate for putting into a base class. Is identical across all result handlers.</remarks>
-        public void ProcessSynchronousEvents(bool forceProcess = false)
+        public virtual void ProcessSynchronousEvents(bool forceProcess = false)
         {
-            var time = _algorithm.UtcTime;
+            if (Algorithm == null) return;
+
+            var time = Algorithm.UtcTime;
 
             if (time > _nextSample || forceProcess)
             {
@@ -822,53 +686,16 @@ namespace QuantConnect.Lean.Engine.Results
                 _nextSample = time.Add(ResamplePeriod);
 
                 //Sample the portfolio value over time for chart.
-                SampleEquity(time, Math.Round(_algorithm.Portfolio.TotalPortfolioValue, 4));
+                SampleEquity(time, Math.Round(Algorithm.Portfolio.TotalPortfolioValue, 4));
 
                 //Also add the user samples / plots to the result handler tracking:
-                SampleRange(_algorithm.GetChartUpdates());
-
-                //Sample the asset pricing:
-                foreach (var security in _algorithm.Securities.Values)
-                {
-                    SampleAssetPrices(security.Symbol, time, security.Price);
-                }
+                SampleRange(Algorithm.GetChartUpdates());
             }
 
-            //Send out the debug messages:
-            var debugStopWatch = Stopwatch.StartNew();
-            while (_algorithm.DebugMessages.Count > 0 && debugStopWatch.ElapsedMilliseconds < 250)
-            {
-                string message;
-                if (_algorithm.DebugMessages.TryDequeue(out message))
-                {
-                    DebugMessage(message);
-                }
-            }
-
-            //Send out the error messages:
-            var errorStopWatch = Stopwatch.StartNew();
-            while (_algorithm.ErrorMessages.Count > 0 && errorStopWatch.ElapsedMilliseconds < 250)
-            {
-                string message;
-                if (_algorithm.ErrorMessages.TryDequeue(out message))
-                {
-                    ErrorMessage(message);
-                }
-            }
-
-            //Send out the log messages:
-            var logStopWatch = Stopwatch.StartNew();
-            while (_algorithm.LogMessages.Count > 0 && logStopWatch.ElapsedMilliseconds < 250)
-            {
-                string message;
-                if (_algorithm.LogMessages.TryDequeue(out message))
-                {
-                    LogMessage(message);
-                }
-            }
+            ProcessAlgorithmLogs();
 
             //Set the running statistics:
-            foreach (var pair in _algorithm.RuntimeStatistics)
+            foreach (var pair in Algorithm.RuntimeStatistics)
             {
                 RuntimeStatistic(pair.Key, pair.Value);
             }

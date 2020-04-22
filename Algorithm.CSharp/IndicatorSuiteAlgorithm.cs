@@ -1,11 +1,11 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -14,32 +14,41 @@
 */
 
 using System;
-using QuantConnect.Algorithm;
+using System.Collections.Generic;
 using QuantConnect.Data;
+using QuantConnect.Data.Custom;
 using QuantConnect.Data.Market;
 using QuantConnect.Indicators;
+using QuantConnect.Interfaces;
 
-namespace QuantConnect
+namespace QuantConnect.Algorithm.CSharp
 {
     /// <summary>
-    /// QuantConnect University: Indicator Suite Example.
+    /// Demonstration algorithm of popular indicators and plotting them.
     /// </summary>
-    public class IndicatorSuiteAlgorithm : QCAlgorithm
+    /// <meta name="tag" content="indicators" />
+    /// <meta name="tag" content="indicator classes" />
+    /// <meta name="tag" content="plotting indicators" />
+    /// <meta name="tag" content="charting" />
+    /// <meta name="tag" content="indicator field selection" />
+    public class IndicatorSuiteAlgorithm : QCAlgorithm, IRegressionAlgorithmDefinition
     {
-        string _symbol = "SPY";
-        string _customSymbol = "BTC";
+        private string _ticker = "SPY";
+        private string _customTicker = "WIKI/FB";
 
+        private Symbol _symbol;
+        private Symbol _customSymbol;
 
-        Indicators _indicators;
-        Indicators _selectorIndicators;
-        IndicatorBase<IndicatorDataPoint> _ratio;
+        private Indicators _indicators;
+        private Indicators _selectorIndicators;
+        private IndicatorBase<IndicatorDataPoint> _ratio;
 
-            //RSI Custom Data:
-        RelativeStrengthIndex _rsiCustom;
-        Minimum _minCustom;
-        Maximum _maxCustom;
+        //RSI Custom Data:
+        private RelativeStrengthIndex _rsiCustom;
+        private Minimum _minCustom;
+        private Maximum _maxCustom;
 
-        decimal _price;
+        private decimal _price;
 
         /// <summary>
         /// Initialize the data and resolution you require for your strategy
@@ -52,10 +61,10 @@ namespace QuantConnect
             SetCash(25000);
 
             //Add as many securities as you like. All the data will be passed into the event handler:
-            AddSecurity(SecurityType.Equity, _symbol, Resolution.Minute);
+            _symbol = AddSecurity(SecurityType.Equity, _ticker, Resolution.Daily).Symbol;
 
             //Add the Custom Data:
-            AddData<Bitcoin>("BTC");
+            _customSymbol = AddData<Quandl>(_customTicker, Resolution.Daily).Symbol;
 
             //Set up default Indicators, these indicators are defined on the Value property of incoming data (except ATR and AROON which use the full TradeBar object)
             _indicators = new Indicators
@@ -109,9 +118,9 @@ namespace QuantConnect
             // these are indicators that require multiple inputs. the most common of which is a ratio.
             // suppose we seek the ratio of BTC to SPY, we could write the following:
             var spyClose = Identity(_symbol);
-            var btcClose = Identity(_customSymbol);
-            // this will create a new indicator whose value is BTC/SPY
-            _ratio = btcClose.Over(spyClose);
+            var fbClose = Identity(_customSymbol);
+            // this will create a new indicator whose value is FB/SPY
+            _ratio = fbClose.Over(spyClose);
             // we can also easily plot our indicators each time they update using th PlotIndicator function
             PlotIndicator("Ratio", _ratio);
         }
@@ -119,8 +128,8 @@ namespace QuantConnect
         /// <summary>
         /// Custom data event handler:
         /// </summary>
-        /// <param name="data">Bitcoin - dictionary of TradeBarlike Bars of Bitcoin Data</param>
-        public void OnData(Bitcoin data)
+        /// <param name="data">Quandl - dictionary Bars of Quandl Data</param>
+        public void OnData(Quandl data)
         {
         }
 
@@ -132,16 +141,16 @@ namespace QuantConnect
         {
             if (!_indicators.BB.IsReady || !_indicators.RSI.IsReady) return;
 
-            _price = data["SPY"].Close;
+            _price = data[_symbol].Close;
 
             if (!Portfolio.HoldStock)
             {
-                int quantity = (int)Math.Floor(Portfolio.Cash / data[_symbol].Close);
+                int quantity = (int)Math.Floor(Portfolio.Cash / _price);
 
                 //Order function places trades: enter the string symbol and the quantity you want:
                 Order(_symbol, quantity);
 
-                //Debug sends messages to the user console: "Time" is the algorithm time keeper object 
+                //Debug sends messages to the user console: "Time" is the algorithm time keeper object
                 Debug("Purchased SPY on " + Time.ToShortDateString());
             }
         }
@@ -167,19 +176,20 @@ namespace QuantConnect
 
             Plot("AROON", _indicators.AROON.AroonUp, _indicators.AROON.AroonDown);
 
-            Plot("MOM", _indicators.MOM);
-            Plot("MOMP", _indicators.MOMP);
+            // The following Plot method calls are commented out because of the 10 series limit for backtests
+            //Plot("MOM", _indicators.MOM);
+            //Plot("MOMP", _indicators.MOMP);
 
-            Plot("MACD", "Price", _price);
-            Plot("MACD", _indicators.MACD.Fast, _indicators.MACD.Slow, _indicators.MACD.Signal);
+            //Plot("MACD", "Price", _price);
+            //Plot("MACD", _indicators.MACD.Fast, _indicators.MACD.Slow, _indicators.MACD.Signal);
 
-            Plot("Averages", _indicators.EMA, _indicators.SMA);
+            //Plot("Averages", _indicators.EMA, _indicators.SMA);
         }
 
         /// <summary>
         /// Class to hold a bunch of different indicators for this example
         /// </summary>
-        class Indicators
+        private class Indicators
         {
             public BollingerBands BB;
             public SimpleMovingAverage SMA;
@@ -215,5 +225,62 @@ namespace QuantConnect
                 Period = bar.Period
             };
         }
+
+        /// <summary>
+        /// This is used by the regression test system to indicate if the open source Lean repository has the required data to run this algorithm.
+        /// </summary>
+        public bool CanRunLocally { get; } = true;
+
+        /// <summary>
+        /// This is used by the regression test system to indicate which languages this algorithm is written in.
+        /// </summary>
+        public Language[] Languages { get; } = { Language.CSharp, Language.Python };
+
+        /// <summary>
+        /// This is used by the regression test system to indicate what the expected statistics are from running the algorithm
+        /// </summary>
+        public Dictionary<string, string> ExpectedStatistics => new Dictionary<string, string>
+        {
+            {"Total Trades", "1"},
+            {"Average Win", "0%"},
+            {"Average Loss", "0%"},
+            {"Compounding Annual Return", "19.104%"},
+            {"Drawdown", "7.300%"},
+            {"Expectancy", "0"},
+            {"Net Profit", "41.858%"},
+            {"Sharpe Ratio", "1.607"},
+            {"Probabilistic Sharpe Ratio", "77.376%"},
+            {"Loss Rate", "0%"},
+            {"Win Rate", "0%"},
+            {"Profit-Loss Ratio", "0"},
+            {"Alpha", "0.171"},
+            {"Beta", "-0.06"},
+            {"Annual Standard Deviation", "0.099"},
+            {"Annual Variance", "0.01"},
+            {"Information Ratio", "-0.187"},
+            {"Tracking Error", "0.146"},
+            {"Treynor Ratio", "-2.677"},
+            {"Total Fees", "$1.00"},
+            {"Fitness Score", "0.001"},
+            {"Kelly Criterion Estimate", "0"},
+            {"Kelly Criterion Probability Value", "0"},
+            {"Sortino Ratio", "2.305"},
+            {"Return Over Maximum Drawdown", "2.632"},
+            {"Portfolio Turnover", "0.001"},
+            {"Total Insights Generated", "0"},
+            {"Total Insights Closed", "0"},
+            {"Total Insights Analysis Completed", "0"},
+            {"Long Insight Count", "0"},
+            {"Short Insight Count", "0"},
+            {"Long/Short Ratio", "100%"},
+            {"Estimated Monthly Alpha Value", "$0"},
+            {"Total Accumulated Estimated Alpha Value", "$0"},
+            {"Mean Population Estimated Insight Value", "$0"},
+            {"Mean Population Direction", "0%"},
+            {"Mean Population Magnitude", "0%"},
+            {"Rolling Averaged Population Direction", "0%"},
+            {"Rolling Averaged Population Magnitude", "0%"},
+            {"OrderListHash", "-1514456802"}
+        };
     }
 }

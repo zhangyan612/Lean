@@ -1,11 +1,11 @@
 /*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,9 +15,14 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using QuantConnect.Orders;
+using QuantConnect.Orders.Fees;
+using QuantConnect.Orders.TimeInForces;
 using QuantConnect.Securities;
 using QuantConnect.Securities.Forex;
+using QuantConnect.Util;
+using static QuantConnect.StringExtensions;
 
 namespace QuantConnect.Brokerages
 {
@@ -27,13 +32,48 @@ namespace QuantConnect.Brokerages
     public class InteractiveBrokersBrokerageModel : DefaultBrokerageModel
     {
         /// <summary>
+        /// The default markets for the IB brokerage
+        /// </summary>
+        public new static readonly IReadOnlyDictionary<SecurityType, string> DefaultMarketMap = new Dictionary<SecurityType, string>
+        {
+            {SecurityType.Base, Market.USA},
+            {SecurityType.Equity, Market.USA},
+            {SecurityType.Option, Market.USA},
+            {SecurityType.Future, Market.USA},
+            {SecurityType.Forex, Market.Oanda},
+            {SecurityType.Cfd, Market.Oanda}
+        }.ToReadOnlyDictionary();
+
+        private readonly Type[] _supportedTimeInForces =
+        {
+            typeof(GoodTilCanceledTimeInForce),
+            typeof(DayTimeInForce),
+            typeof(GoodTilDateTimeInForce)
+        };
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="InteractiveBrokersBrokerageModel"/> class
         /// </summary>
-        /// <param name="accountType">The type of account to be modelled, defaults to 
-        /// <see cref="QuantConnect.AccountType.Margin"/></param>
+        /// <param name="accountType">The type of account to be modelled, defaults to
+        /// <see cref="AccountType.Margin"/></param>
         public InteractiveBrokersBrokerageModel(AccountType accountType = AccountType.Margin)
             : base(accountType)
         {
+        }
+
+        /// <summary>
+        /// Gets a map of the default markets to be used for each security type
+        /// </summary>
+        public override IReadOnlyDictionary<SecurityType, string> DefaultMarkets => DefaultMarketMap;
+
+        /// <summary>
+        /// Gets a new fee model that represents this brokerage's fee structure
+        /// </summary>
+        /// <param name="security">The security to get a fee model for</param>
+        /// <returns>The new fee model for this brokerage</returns>
+        public override IFeeModel GetFeeModel(Security security)
+        {
+            return new InteractiveBrokersFeeModel();
         }
 
         /// <summary>
@@ -51,24 +91,38 @@ namespace QuantConnect.Brokerages
         {
             message = null;
 
-            //https://www.interactivebrokers.com/en/?f=%2Fen%2Ftrading%2FforexOrderSize.php
-            switch (order.SecurityType)
+            // validate security type
+            if (security.Type != SecurityType.Equity &&
+                security.Type != SecurityType.Forex &&
+                security.Type != SecurityType.Option &&
+                security.Type != SecurityType.Future)
             {
-                case SecurityType.Base:
-                    return false;
-                case SecurityType.Equity:
-                    return true; // could not find order limits on equities
-                case SecurityType.Option:
-                    return true;
-                case SecurityType.Commodity:
-                    return true;
-                case SecurityType.Forex:
-                    return IsForexWithinOrderSizeLimits(order.Symbol.Value, order.Quantity, out message);
-                case SecurityType.Future:
-                    return true;
-                default:
-                    throw new ArgumentOutOfRangeException();
+                message = new BrokerageMessageEvent(BrokerageMessageType.Warning, "NotSupported",
+                    Invariant($"The {nameof(InteractiveBrokersBrokerageModel)} does not support {security.Type} security type.")
+                );
+
+                return false;
             }
+
+            // validate order quantity
+            //https://www.interactivebrokers.com/en/?f=%2Fen%2Ftrading%2FforexOrderSize.php
+            if (security.Type == SecurityType.Forex &&
+                !IsForexWithinOrderSizeLimits(order.Symbol.Value, order.Quantity, out message))
+            {
+                return false;
+            }
+
+            // validate time in force
+            if (!_supportedTimeInForces.Contains(order.TimeInForce.GetType()))
+            {
+                message = new BrokerageMessageEvent(BrokerageMessageType.Warning, "NotSupported",
+                    Invariant($"The {nameof(InteractiveBrokersBrokerageModel)} does not support {order.TimeInForce.GetType().Name} time in force.")
+                );
+
+                return false;
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -93,7 +147,7 @@ namespace QuantConnect.Brokerages
 
         /// <summary>
         /// Returns true if the brokerage would be able to execute this order at this time assuming
-        /// market prices are sufficient for the fill to take place. This is used to emulate the 
+        /// market prices are sufficient for the fill to take place. This is used to emulate the
         /// brokerage fills in backtesting and paper trading. For example some brokerages may not perform
         /// executions during extended market hours. This is not intended to be checking whether or not
         /// the exchange is open, that is handled in the Security.Exchange property.
@@ -109,7 +163,7 @@ namespace QuantConnect.Brokerages
         /// <summary>
         /// Returns true if the specified order is within IB's order size limits
         /// </summary>
-        private bool IsForexWithinOrderSizeLimits(string currencyPair, int quantity, out BrokerageMessageEvent message)
+        private bool IsForexWithinOrderSizeLimits(string currencyPair, decimal quantity, out BrokerageMessageEvent message)
         {
             /* https://www.interactivebrokers.com/en/?f=%2Fen%2Ftrading%2FforexOrderSize.php
             Currency    Currency Description	    Minimum Order Size	Maximum Order Size
@@ -141,7 +195,6 @@ namespace QuantConnect.Brokerages
             string baseCurrency, quoteCurrency;
             Forex.DecomposeCurrencyPair(currencyPair, out baseCurrency, out quoteCurrency);
 
-
             decimal max;
             ForexCurrencyLimits.TryGetValue(baseCurrency, out max);
 
@@ -149,8 +202,8 @@ namespace QuantConnect.Brokerages
             if (!orderIsWithinForexSizeLimits)
             {
                 message = new BrokerageMessageEvent(BrokerageMessageType.Warning, "OrderSizeLimit",
-                    string.Format("The maximum allowable order size is {0}{1}.", max, baseCurrency)
-                    );
+                    Invariant($"The maximum allowable order size is {max}{baseCurrency}.")
+                );
             }
             return orderIsWithinForexSizeLimits;
         }

@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,6 +15,7 @@
 */
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -33,11 +34,13 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators.Factories
     /// </summary>
     public class FineFundamentalSubscriptionEnumeratorFactory : ISubscriptionEnumeratorFactory
     {
-        private SingleEntryDataCacheProvider _dataCacheProvider;
+        private static readonly ConcurrentDictionary<int, List<DateTime>> FineFilesCache
+            = new ConcurrentDictionary<int, List<DateTime>>();
+        // creating a fine fundamental instance is expensive (its massive) so we keep our factory instance
+        private static readonly FineFundamental FineFundamental = new FineFundamental();
 
         private readonly bool _isLiveMode;
         private readonly Func<SubscriptionRequest, IEnumerable<DateTime>> _tradableDaysProvider;
-        private string _lastUsedFileName;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="FineFundamentalSubscriptionEnumeratorFactory"/> class.
@@ -59,94 +62,113 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators.Factories
         /// <returns>An enumerator reading the subscription request</returns>
         public IEnumerator<BaseData> CreateEnumerator(SubscriptionRequest request, IDataProvider dataProvider)
         {
-            _dataCacheProvider = new SingleEntryDataCacheProvider(dataProvider);
+            using (var dataCacheProvider = new SingleEntryDataCacheProvider(dataProvider))
+            {
+                var tradableDays = _tradableDaysProvider(request);
 
-            var tradableDays = _tradableDaysProvider(request);
+                var fineFundamentalConfiguration = new SubscriptionDataConfig(request.Configuration, typeof(FineFundamental), request.Security.Symbol);
 
-            var fineFundamental = new FineFundamental();
-            var fineFundamentalConfiguration = new SubscriptionDataConfig(request.Configuration, typeof(FineFundamental), request.Security.Symbol);
-
-            return (
-                from date in tradableDays
-
-                let fineFundamentalSource = GetSource(fineFundamental, fineFundamentalConfiguration, date)
-                let fineFundamentalFactory = SubscriptionDataSourceReader.ForSource(fineFundamentalSource, _dataCacheProvider, fineFundamentalConfiguration, date, _isLiveMode)
-                let fineFundamentalForDate = (FineFundamental)fineFundamentalFactory.Read(fineFundamentalSource).FirstOrDefault()
-
-                select new FineFundamental
+                foreach (var date in tradableDays)
                 {
-                    DataType = MarketDataType.Auxiliary,
-                    Symbol = request.Configuration.Symbol,
-                    Time = date,
-                    CompanyReference = fineFundamentalForDate != null ? fineFundamentalForDate.CompanyReference : new CompanyReference(),
-                    SecurityReference = fineFundamentalForDate != null ? fineFundamentalForDate.SecurityReference : new SecurityReference(),
-                    FinancialStatements = fineFundamentalForDate != null ? fineFundamentalForDate.FinancialStatements : new FinancialStatements(),
-                    EarningReports = fineFundamentalForDate != null ? fineFundamentalForDate.EarningReports : new EarningReports(),
-                    OperationRatios = fineFundamentalForDate != null ? fineFundamentalForDate.OperationRatios : new OperationRatios(),
-                    EarningRatios = fineFundamentalForDate != null ? fineFundamentalForDate.EarningRatios : new EarningRatios(),
-                    ValuationRatios = fineFundamentalForDate != null ? fineFundamentalForDate.ValuationRatios : new ValuationRatios()
+                    var fineFundamentalSource = GetSource(FineFundamental, fineFundamentalConfiguration, date);
+                    var fineFundamentalFactory = SubscriptionDataSourceReader.ForSource(fineFundamentalSource, dataCacheProvider, fineFundamentalConfiguration, date, _isLiveMode, FineFundamental);
+                    var fineFundamentalForDate = (FineFundamental)fineFundamentalFactory.Read(fineFundamentalSource).FirstOrDefault();
+
+                    yield return new FineFundamental
+                    {
+                        DataType = MarketDataType.Auxiliary,
+                        Symbol = request.Configuration.Symbol,
+                        Time = date,
+                        CompanyReference = fineFundamentalForDate != null ? fineFundamentalForDate.CompanyReference : new CompanyReference(),
+                        SecurityReference = fineFundamentalForDate != null ? fineFundamentalForDate.SecurityReference : new SecurityReference(),
+                        FinancialStatements = fineFundamentalForDate != null ? fineFundamentalForDate.FinancialStatements : new FinancialStatements(),
+                        EarningReports = fineFundamentalForDate != null ? fineFundamentalForDate.EarningReports : new EarningReports(),
+                        OperationRatios = fineFundamentalForDate != null ? fineFundamentalForDate.OperationRatios : new OperationRatios(),
+                        EarningRatios = fineFundamentalForDate != null ? fineFundamentalForDate.EarningRatios : new EarningRatios(),
+                        ValuationRatios = fineFundamentalForDate != null ? fineFundamentalForDate.ValuationRatios : new ValuationRatios(),
+                        AssetClassification = fineFundamentalForDate != null ? fineFundamentalForDate.AssetClassification : new AssetClassification(),
+                        CompanyProfile = fineFundamentalForDate != null ? fineFundamentalForDate.CompanyProfile : new CompanyProfile()
+                    };
                 }
-                ).GetEnumerator();
+            }
         }
 
         /// <summary>
-        /// Returns a SubscriptionDataSource for the FineFundamental class, 
+        /// Returns a SubscriptionDataSource for the FineFundamental class,
         /// returning data from a previous date if not available for the requested date
         /// </summary>
         private SubscriptionDataSource GetSource(FineFundamental fine, SubscriptionDataConfig config, DateTime date)
         {
             var source = fine.GetSource(config, date, _isLiveMode);
 
-            var fileName = date.ToString("yyyyMMdd");
-
-            if (!File.Exists(source.Source))
+            if (File.Exists(source.Source))
             {
-                if (_lastUsedFileName == null)
+                return source;
+            }
+
+            var cacheKey = config.Symbol.Value.ToLowerInvariant().GetHashCode();
+            List<DateTime> availableDates;
+
+            // only use cache in backtest, since in live mode new fine files are added
+            // we still didn't load available fine dates for this symbol
+            if (_isLiveMode || !FineFilesCache.TryGetValue(cacheKey, out availableDates))
+            {
+                try
                 {
-                    // find first file date
                     var path = Path.GetDirectoryName(source.Source) ?? string.Empty;
-                    if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
-                        return source;
-
-                    var firstFileName = Path.GetFileNameWithoutExtension(Directory.GetFiles(path, "*.zip").OrderBy(x => x).First());
-                    var firstDate = DateTime.ParseExact(firstFileName, "yyyyMMdd", CultureInfo.InvariantCulture);
-
-                    // requested date before first date, return current invalid source anyway
-                    if (date < firstDate)
-                        return source;
-
-                    // requested date after first date, save date of first existing file
-                    _lastUsedFileName = firstFileName;
-
-                    // loop back in time until we find an existing file
-                    while (string.CompareOrdinal(fileName, _lastUsedFileName) > 0)
-                    {
-                        // get previous date
-                        date = date.AddDays(-1);
-
-                        // get file name for this date
-                        source = fine.GetSource(config, date, _isLiveMode);
-                        fileName = Path.GetFileNameWithoutExtension(source.Source);
-
-                        if (!File.Exists(source.Source))
-                            continue;
-
-                        // we found the file, save its name and return the source
-                        _lastUsedFileName = fileName;
-
-                        break;
-                    }
+                    availableDates = Directory.GetFiles(path, "*.zip")
+                        .Select(
+                            filePath =>
+                            {
+                                try
+                                {
+                                    return DateTime.ParseExact(
+                                        Path.GetFileNameWithoutExtension(filePath),
+                                        "yyyyMMdd",
+                                        CultureInfo.InvariantCulture
+                                    );
+                                }
+                                catch
+                                {
+                                    // just in case...
+                                    return DateTime.MaxValue;
+                                }
+                            }
+                        )
+                        .Where(time => time != DateTime.MaxValue)
+                        .OrderBy(x => x)
+                        .ToList();
                 }
-                else
+                catch
                 {
-                    // return source for last existing file date
-                    date = DateTime.ParseExact(_lastUsedFileName, "yyyyMMdd", CultureInfo.InvariantCulture);
-                    source = fine.GetSource(config, date, _isLiveMode);
+                    // directory doesn't exist or path is null
+                    if (!_isLiveMode)
+                    {
+                        // only add to cache if not live mode
+                        FineFilesCache[cacheKey] = new List<DateTime>();
+                    }
+                    return source;
+                }
+
+                if (!_isLiveMode)
+                {
+                    // only add to cache if not live mode
+                    FineFilesCache[cacheKey] = availableDates;
                 }
             }
-            else
+
+            // requested date before first date, return null source
+            if (availableDates.Count == 0 || date < availableDates[0])
             {
-                _lastUsedFileName = fileName;
+                return source;
+            }
+            for (var i = availableDates.Count - 1; i >= 0; i--)
+            {
+                // we iterate backwards ^ and find the first data point before 'date'
+                if (availableDates[i] <= date)
+                {
+                    return fine.GetSource(config, availableDates[i], _isLiveMode);
+                }
             }
 
             return source;

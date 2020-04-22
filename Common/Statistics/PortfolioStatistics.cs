@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,6 +17,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using MathNet.Numerics.Statistics;
+using Newtonsoft.Json;
+using QuantConnect.Util;
 
 namespace QuantConnect.Statistics
 {
@@ -30,94 +32,119 @@ namespace QuantConnect.Statistics
         /// <summary>
         /// The average rate of return for winning trades
         /// </summary>
-        public decimal AverageWinRate { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal AverageWinRate { get; set; }
 
         /// <summary>
         /// The average rate of return for losing trades
         /// </summary>
-        public decimal AverageLossRate { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal AverageLossRate { get; set; }
 
         /// <summary>
         /// The ratio of the average win rate to the average loss rate
         /// </summary>
         /// <remarks>If the average loss rate is zero, ProfitLossRatio is set to 0</remarks>
-        public decimal ProfitLossRatio { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal ProfitLossRatio { get; set; }
 
         /// <summary>
         /// The ratio of the number of winning trades to the total number of trades
         /// </summary>
         /// <remarks>If the total number of trades is zero, WinRate is set to zero</remarks>
-        public decimal WinRate { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal WinRate { get; set; }
 
         /// <summary>
         /// The ratio of the number of losing trades to the total number of trades
         /// </summary>
         /// <remarks>If the total number of trades is zero, LossRate is set to zero</remarks>
-        public decimal LossRate { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal LossRate { get; set; }
 
         /// <summary>
         /// The expected value of the rate of return
         /// </summary>
-        public decimal Expectancy { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal Expectancy { get; set; }
 
         /// <summary>
         /// Annual compounded returns statistic based on the final-starting capital and years.
         /// </summary>
         /// <remarks>Also known as Compound Annual Growth Rate (CAGR)</remarks>
-        public decimal CompoundingAnnualReturn { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal CompoundingAnnualReturn { get; set; }
 
         /// <summary>
         /// Drawdown maximum percentage.
         /// </summary>
-        public decimal Drawdown { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal Drawdown { get; set; }
 
         /// <summary>
         /// The total net profit percentage.
         /// </summary>
-        public decimal TotalNetProfit { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal TotalNetProfit { get; set; }
 
         /// <summary>
         /// Sharpe ratio with respect to risk free rate: measures excess of return per unit of risk.
         /// </summary>
         /// <remarks>With risk defined as the algorithm's volatility</remarks>
-        public decimal SharpeRatio { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal SharpeRatio { get; set; }
+
+        /// <summary>
+        /// Probabilistic Sharpe Ratio is a probability measure associated with the Sharpe ratio.
+        /// It informs us of the probability that the estimated Sharpe ratio is greater than a chosen benchmark
+        /// </summary>
+        /// <remarks>See https://www.quantconnect.com/forum/discussion/6483/probabilistic-sharpe-ratio/p1</remarks>
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal ProbabilisticSharpeRatio { get; set; }
 
         /// <summary>
         /// Algorithm "Alpha" statistic - abnormal returns over the risk free rate and the relationshio (beta) with the benchmark returns.
         /// </summary>
-        public decimal Alpha { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal Alpha { get; set; }
 
         /// <summary>
         /// Algorithm "beta" statistic - the covariance between the algorithm and benchmark performance, divided by benchmark's variance
         /// </summary>
-        public decimal Beta { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal Beta { get; set; }
 
         /// <summary>
         /// Annualized standard deviation
         /// </summary>
-        public decimal AnnualStandardDeviation { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal AnnualStandardDeviation { get; set; }
 
         /// <summary>
         /// Annualized variance statistic calculation using the daily performance variance and trading days per year.
         /// </summary>
-        public decimal AnnualVariance { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal AnnualVariance { get; set; }
 
         /// <summary>
         /// Information ratio - risk adjusted return
         /// </summary>
         /// <remarks>(risk = tracking error volatility, a volatility measures that considers the volatility of both algo and benchmark)</remarks>
-        public decimal InformationRatio { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal InformationRatio { get; set; }
 
         /// <summary>
         /// Tracking error volatility (TEV) statistic - a measure of how closely a portfolio follows the index to which it is benchmarked
         /// </summary>
         /// <remarks>If algo = benchmark, TEV = 0</remarks>
-        public decimal TrackingError { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal TrackingError { get; set; }
 
         /// <summary>
         /// Treynor ratio statistic is a measurement of the returns earned in excess of that which could have been earned on an investment that has no diversifiable risk
         /// </summary>
-        public decimal TreynorRatio { get; private set; }
+        [JsonConverter(typeof(JsonRoundingConverter))]
+        public decimal TreynorRatio { get; set; }
 
 
         /// <summary>
@@ -132,12 +159,18 @@ namespace QuantConnect.Statistics
         public PortfolioStatistics(
             SortedDictionary<DateTime, decimal> profitLoss,
             SortedDictionary<DateTime, decimal> equity,
-            List<double> listPerformance, 
-            List<double> listBenchmark, 
-            decimal startingCapital, 
+            List<double> listPerformance,
+            List<double> listBenchmark,
+            decimal startingCapital,
             int tradingDaysPerYear = 252)
         {
-            if (startingCapital == 0) return;
+            if (startingCapital == 0
+                // minimum amount of samples to calculate variance
+                || listBenchmark.Count < 2
+                || listPerformance.Count < 2)
+            {
+                return;
+            }
 
             var runningCapital = startingCapital;
             var totalProfit = 0m;
@@ -166,39 +199,41 @@ namespace QuantConnect.Statistics
             AverageLossRate = totalLosses == 0 ? 0 : totalLoss / totalLosses;
             ProfitLossRatio = AverageLossRate == 0 ? 0 : AverageWinRate / Math.Abs(AverageLossRate);
 
-            WinRate = profitLoss.Count == 0 ? 0 : (decimal)totalWins / profitLoss.Count;
-            LossRate = profitLoss.Count == 0 ? 0 : (decimal)totalLosses / profitLoss.Count;
+            WinRate = profitLoss.Count == 0 ? 0 : (decimal) totalWins / profitLoss.Count;
+            LossRate = profitLoss.Count == 0 ? 0 : (decimal) totalLosses / profitLoss.Count;
             Expectancy = WinRate * ProfitLossRatio - LossRate;
 
-            if (profitLoss.Count > 0)
+            if (startingCapital != 0)
             {
-                TotalNetProfit = (equity.Values.LastOrDefault() / startingCapital) - 1;
+                TotalNetProfit = equity.Values.LastOrDefault() / startingCapital - 1;
             }
 
-            var fractionOfYears = (decimal)(equity.Keys.LastOrDefault() - equity.Keys.FirstOrDefault()).TotalDays / 365;
-            CompoundingAnnualReturn = CompoundingAnnualPerformance(startingCapital, equity.Values.LastOrDefault(), fractionOfYears);
+            var fractionOfYears = (decimal) (equity.Keys.LastOrDefault() - equity.Keys.FirstOrDefault()).TotalDays / 365;
+            CompoundingAnnualReturn = Statistics.CompoundingAnnualPerformance(startingCapital, equity.Values.LastOrDefault(), fractionOfYears);
 
             Drawdown = DrawdownPercent(equity, 3);
 
             AnnualVariance = GetAnnualVariance(listPerformance, tradingDaysPerYear);
-            AnnualStandardDeviation = (decimal)Math.Sqrt((double)AnnualVariance);
+            AnnualStandardDeviation = (decimal) Math.Sqrt((double) AnnualVariance);
 
+            var benchmarkAnnualPerformance = GetAnnualPerformance(listBenchmark, tradingDaysPerYear);
             var annualPerformance = GetAnnualPerformance(listPerformance, tradingDaysPerYear);
             SharpeRatio = AnnualStandardDeviation == 0 ? 0 : (annualPerformance - RiskFreeRate) / AnnualStandardDeviation;
 
             var benchmarkVariance = listBenchmark.Variance();
-            Beta = benchmarkVariance.IsNaNOrZero() ? 0 : (decimal)(listPerformance.Covariance(listBenchmark) / benchmarkVariance);
+            Beta = benchmarkVariance.IsNaNOrZero() ? 0 : (decimal) (listPerformance.Covariance(listBenchmark) / benchmarkVariance);
 
-            Alpha = Beta == 0 ? 0 : annualPerformance - (RiskFreeRate + Beta * (GetAnnualPerformance(listBenchmark, tradingDaysPerYear) - RiskFreeRate));
+            Alpha = Beta == 0 ? 0 : annualPerformance - (RiskFreeRate + Beta * (benchmarkAnnualPerformance - RiskFreeRate));
 
-            var correlation = Correlation.Pearson(listPerformance, listBenchmark);
-            var benchmarkAnnualVariance = benchmarkVariance * tradingDaysPerYear;
-            TrackingError = correlation.IsNaNOrZero() || benchmarkAnnualVariance.IsNaNOrZero() ? 0 :
-                (decimal)Math.Sqrt((double)AnnualVariance - 2 * correlation * (double)AnnualStandardDeviation * Math.Sqrt(benchmarkAnnualVariance) + benchmarkAnnualVariance);
+            TrackingError = (decimal)Statistics.TrackingError(listPerformance, listBenchmark, (double)tradingDaysPerYear);
 
-            InformationRatio = TrackingError == 0 ? 0 : (annualPerformance - GetAnnualPerformance(listBenchmark, tradingDaysPerYear)) / TrackingError;
+            InformationRatio = TrackingError == 0 ? 0 : (annualPerformance - benchmarkAnnualPerformance) / TrackingError;
 
             TreynorRatio = Beta == 0 ? 0 : (annualPerformance - RiskFreeRate) / Beta;
+
+            // deannualize a 1 sharpe ratio
+            var benchmarkSharpeRatio = 1.0d / Math.Sqrt(252);
+            ProbabilisticSharpeRatio = Statistics.ProbabilisticSharpeRatio(listPerformance, benchmarkSharpeRatio).SafeDecimalCast();
         }
 
         /// <summary>
@@ -209,15 +244,11 @@ namespace QuantConnect.Statistics
         }
 
         /// <summary>
-        /// Annual compounded returns statistic based on the final-starting capital and years.
+        /// Gets the current defined risk free annual return rate
         /// </summary>
-        /// <param name="startingCapital">Algorithm starting capital</param>
-        /// <param name="finalCapital">Algorithm final capital</param>
-        /// <param name="years">Years trading</param>
-        /// <returns>Decimal fraction for annual compounding performance</returns>
-        private static decimal CompoundingAnnualPerformance(decimal startingCapital, decimal finalCapital, decimal years)
+        public static decimal GetRiskFreeRate()
         {
-            return (years == 0 ? 0d : Math.Pow((double)finalCapital / (double)startingCapital, 1 / (double)years) - 1).SafeDecimalCast();
+            return RiskFreeRate;
         }
 
         /// <summary>
@@ -251,7 +282,7 @@ namespace QuantConnect.Statistics
         /// <returns>Double annual performance percentage</returns>
         private static decimal GetAnnualPerformance(List<double> performance, int tradingDaysPerYear = 252)
         {
-            return (decimal)performance.Average() * tradingDaysPerYear;
+            return (decimal)Statistics.AnnualPerformance(performance, (double)tradingDaysPerYear);
         }
 
         /// <summary>
@@ -265,7 +296,6 @@ namespace QuantConnect.Statistics
         {
             var variance = performance.Variance();
             return variance.IsNaNOrZero() ? 0 : (decimal)variance * tradingDaysPerYear;
-        }
-
+        }        
     }
 }

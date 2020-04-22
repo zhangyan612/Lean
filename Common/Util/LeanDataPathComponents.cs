@@ -1,11 +1,11 @@
 /*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -119,7 +119,7 @@ namespace QuantConnect.Util
 
             if (parts.Length < LowResSecurityTypeOffset)
             {
-                throw new FormatException("Unexpected path format: " + path);
+                throw new FormatException($"Unexpected path format: {path}");
             }
 
             var securityTypeOffset = LowResSecurityTypeOffset;
@@ -131,7 +131,7 @@ namespace QuantConnect.Util
                 rawValue = parts[parts.Length - securityTypeOffset];
                 if (!Enum.TryParse(rawValue, true, out securityType))
                 {
-                    throw new FormatException("Unexpected path format: " + path);
+                    throw new FormatException($"Unexpected path format: {path}");
                 }
             }
 
@@ -144,13 +144,19 @@ namespace QuantConnect.Util
                 if (securityType == SecurityType.Option)
                 {
                     // ticker_trade_american
-                    var tickerWithoutStyle = ticker.Substring(0, ticker.LastIndexOf("_"));
-                    ticker = tickerWithoutStyle.Substring(0, tickerWithoutStyle.LastIndexOf("_"));
+                    var tickerWithoutStyle = ticker.Substring(0, ticker.LastIndexOfInvariant("_"));
+                    ticker = tickerWithoutStyle.Substring(0, tickerWithoutStyle.LastIndexOfInvariant("_"));
                 }
                 if (securityType == SecurityType.Future)
                 {
                     // ticker_trade
-                    ticker = ticker.Substring(0, ticker.LastIndexOf("_"));
+                    ticker = ticker.Substring(0, ticker.LastIndexOfInvariant("_"));
+                }
+                if (securityType == SecurityType.Crypto &&
+                    (resolution == Resolution.Daily || resolution == Resolution.Hour))
+                {
+                    // ticker_trade or ticker_quote
+                    ticker = ticker.Substring(0, ticker.LastIndexOfInvariant("_"));
                 }
             }
             else

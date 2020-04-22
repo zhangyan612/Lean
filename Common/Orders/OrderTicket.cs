@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using QuantConnect.Securities;
+using static QuantConnect.StringExtensions;
 
 namespace QuantConnect.Orders
 {
@@ -29,20 +30,21 @@ namespace QuantConnect.Orders
     {
         private readonly object _orderEventsLock = new object();
         private readonly object _updateRequestsLock = new object();
-        private readonly object _setCancelRequestLock = new object();
+        private readonly object _cancelRequestLock = new object();
 
         private Order _order;
         private OrderStatus? _orderStatusOverride;
         private CancelOrderRequest _cancelRequest;
 
-        private int _quantityFilled;
+        private decimal _quantityFilled;
         private decimal _averageFillPrice;
 
         private readonly int _orderId;
-        private readonly List<OrderEvent> _orderEvents; 
+        private readonly List<OrderEvent> _orderEvents;
         private readonly SubmitOrderRequest _submitRequest;
         private readonly ManualResetEvent _orderStatusClosedEvent;
         private readonly List<UpdateOrderRequest> _updateRequests;
+        private readonly ManualResetEvent _orderSetEvent;
 
         // we pull this in to provide some behavior/simplicity to the ticket API
         private readonly SecurityTransactionManager _transactionManager;
@@ -86,7 +88,7 @@ namespace QuantConnect.Orders
         /// <summary>
         /// Gets the number of units ordered
         /// </summary>
-        public int Quantity
+        public decimal Quantity
         {
             get { return _order == null ? _submitRequest.Quantity : _order.Quantity; }
         }
@@ -128,7 +130,7 @@ namespace QuantConnect.Orders
         /// <summary>
         /// Gets the order's current tag
         /// </summary>
-        public string Tag 
+        public string Tag
         {
             get { return _order == null ? _submitRequest.Tag : _order.Tag; }
         }
@@ -162,7 +164,13 @@ namespace QuantConnect.Orders
         /// </summary>
         public CancelOrderRequest CancelRequest
         {
-            get { return _cancelRequest; }
+            get
+            {
+                lock (_cancelRequestLock)
+                {
+                    return _cancelRequest;
+                }
+            }
         }
 
         /// <summary>
@@ -188,6 +196,16 @@ namespace QuantConnect.Orders
         }
 
         /// <summary>
+        /// Returns true if the order has been set for this ticket
+        /// </summary>
+        public bool HasOrder => _order != null;
+
+        /// <summary>
+        /// Gets a wait handle that can be used to wait until the order has been set
+        /// </summary>
+        public WaitHandle OrderSet => _orderSetEvent;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="OrderTicket"/> class
         /// </summary>
         /// <param name="transactionManager">The transaction manager used for submitting updates and cancels for this ticket</param>
@@ -201,6 +219,7 @@ namespace QuantConnect.Orders
             _orderEvents = new List<OrderEvent>();
             _updateRequests = new List<UpdateOrderRequest>();
             _orderStatusClosedEvent = new ManualResetEvent(false);
+            _orderSetEvent = new ManualResetEvent(false);
         }
 
         /// <summary>
@@ -236,9 +255,10 @@ namespace QuantConnect.Orders
                     break;
 
                 default:
-                    throw new ArgumentOutOfRangeException("field", field, null);
+                    throw new ArgumentOutOfRangeException(nameof(field), field, null);
             }
-            throw new ArgumentException("Unable to get field " + field + " on order of type " + _submitRequest.OrderType);
+
+            throw new ArgumentException(Invariant($"Unable to get field {field} on order of type {_submitRequest.OrderType}"));
         }
 
         /// <summary>
@@ -254,13 +274,99 @@ namespace QuantConnect.Orders
         }
 
         /// <summary>
+        /// Submits an <see cref="UpdateOrderRequest"/> with the <see cref="SecurityTransactionManager"/> to update
+        /// the ticket with tag specified in <paramref name="tag"/>
+        /// </summary>
+        /// <param name="tag"></param>
+        /// <returns><see cref="OrderResponse"/> from updating the order</returns>
+        public OrderResponse UpdateTag(string tag)
+        {
+            var fields = new UpdateOrderFields()
+            {
+                Tag = tag
+            };
+            return Update(fields);
+        }
+
+        /// <summary>
+        /// Submits an <see cref="UpdateOrderRequest"/> with the <see cref="SecurityTransactionManager"/> to update
+        /// the ticket with quantity specified in <paramref name="quantity"/> and with tag specified in <paramref name="quantity"/>
+        /// </summary>
+        /// <param name="quantity"></param>
+        /// <param name="tag"></param>
+        /// <returns><see cref="OrderResponse"/> from updating the order</returns>
+        public OrderResponse UpdateQuantity(decimal quantity, string tag = null)
+        {
+            var fields = new UpdateOrderFields()
+            {
+                Quantity = quantity,
+                Tag = tag
+            };
+            return Update(fields);
+        }
+
+        /// <summary>
+        /// Submits an <see cref="UpdateOrderRequest"/> with the <see cref="SecurityTransactionManager"/> to update
+        /// the ticker with limitprice specified in <paramref name="limitPrice"/> and with tag specified in <paramref name="quantity"/>
+        /// </summary>
+        /// <param name="limitPrice"></param>
+        /// <param name="tag"></param>
+        /// <returns><see cref="OrderResponse"/> from updating the order</returns>
+        public OrderResponse UpdateLimitPrice(decimal limitPrice, string tag = null)
+        {
+            var fields = new UpdateOrderFields()
+            {
+                LimitPrice = limitPrice,
+                Tag = tag
+            };
+            return Update(fields);
+        }
+
+        /// <summary>
+        /// Submits an <see cref="UpdateOrderRequest"/> with the <see cref="SecurityTransactionManager"/> to update
+        /// the ticker with stopprice specified in <paramref name="stopPrice"/> and with tag specified in <paramref name="quantity"/>
+        /// </summary>
+        /// <param name="stopPrice"></param>
+        /// <param name="tag"></param>
+        /// <returns><see cref="OrderResponse"/> from updating the order</returns>
+        public OrderResponse UpdateStopPrice(decimal stopPrice, string tag = null)
+        {
+            var fields = new UpdateOrderFields()
+            {
+                StopPrice = stopPrice,
+                Tag = tag
+            };
+            return Update(fields);
+        }
+
+        /// <summary>
         /// Submits a new request to cancel this order
         /// </summary>
         public OrderResponse Cancel(string tag = null)
         {
             var request = new CancelOrderRequest(_transactionManager.UtcTime, OrderId, tag);
+            lock (_cancelRequestLock)
+            {
+                // don't submit duplicate cancel requests
+                if (_cancelRequest != null)
+                {
+                    return OrderResponse.Error(request, OrderResponseErrorCode.RequestCanceled,
+                        Invariant($"Order {OrderId} has already received a cancellation request.")
+                    );
+                }
+            }
+
             _transactionManager.ProcessRequest(request);
-            return CancelRequest.Response;
+
+            lock (_cancelRequestLock)
+            {
+                if (_cancelRequest != null)
+                {
+                    return _cancelRequest.Response;
+                }
+            }
+
+            throw new ArgumentException("CancelRequest is null.");
         }
 
         /// <summary>
@@ -278,10 +384,14 @@ namespace QuantConnect.Orders
         /// <returns>The most recent <see cref="OrderRequest"/> for this ticket</returns>
         public OrderRequest GetMostRecentOrderRequest()
         {
-            if (CancelRequest != null)
+            lock (_cancelRequestLock)
             {
-                return CancelRequest;
+                if (_cancelRequest != null)
+                {
+                    return _cancelRequest;
+                }
             }
+
             var lastUpdate = _updateRequests.LastOrDefault();
             if (lastUpdate != null)
             {
@@ -304,7 +414,8 @@ namespace QuantConnect.Orders
                     // keep running totals of quantity filled and the average fill price so we
                     // don't need to compute these on demand
                     _quantityFilled += orderEvent.FillQuantity;
-                    var quantityWeightedFillPrice = _orderEvents.Where(x => x.Status.IsFill()).Sum(x => x.AbsoluteFillQuantity*x.FillPrice);
+                    var quantityWeightedFillPrice = _orderEvents.Where(x => x.Status.IsFill())
+                        .Aggregate(0m, (d, x) => d + x.AbsoluteFillQuantity*x.FillPrice);
                     _averageFillPrice = quantityWeightedFillPrice/Math.Abs(_quantityFilled);
                 }
             }
@@ -328,6 +439,8 @@ namespace QuantConnect.Orders
             }
 
             _order = order;
+
+            _orderSetEvent.Set();
         }
 
         /// <summary>
@@ -361,7 +474,8 @@ namespace QuantConnect.Orders
             {
                 throw new ArgumentException("Received CancelOrderRequest for incorrect order id.");
             }
-            lock (_setCancelRequestLock)
+
+            lock (_cancelRequestLock)
             {
                 if (_cancelRequest != null)
                 {
@@ -369,6 +483,7 @@ namespace QuantConnect.Orders
                 }
                 _cancelRequest = request;
             }
+
             return true;
         }
 
@@ -377,8 +492,9 @@ namespace QuantConnect.Orders
         /// </summary>
         public static OrderTicket InvalidCancelOrderId(SecurityTransactionManager transactionManager, CancelOrderRequest request)
         {
-            var submit = new SubmitOrderRequest(OrderType.Market, SecurityType.Base, Symbol.Empty, 0, 0, 0, DateTime.MaxValue, string.Empty);
+            var submit = new SubmitOrderRequest(OrderType.Market, SecurityType.Base, Symbol.Empty, 0, 0, 0, DateTime.MaxValue, request.Tag);
             submit.SetResponse(OrderResponse.UnableToFindOrder(request));
+            submit.SetOrderId(request.OrderId);
             var ticket = new OrderTicket(transactionManager, submit);
             request.SetResponse(OrderResponse.UnableToFindOrder(request));
             ticket.TrySetCancelRequest(request);
@@ -387,12 +503,13 @@ namespace QuantConnect.Orders
         }
 
         /// <summary>
-        /// Creates a new <see cref="OrderTicket"/> tht represents trying to update an order for which no ticket exists
+        /// Creates a new <see cref="OrderTicket"/> that represents trying to update an order for which no ticket exists
         /// </summary>
         public static OrderTicket InvalidUpdateOrderId(SecurityTransactionManager transactionManager, UpdateOrderRequest request)
         {
-            var submit = new SubmitOrderRequest(OrderType.Market, SecurityType.Base, Symbol.Empty, 0, 0, 0, DateTime.MaxValue, string.Empty);
+            var submit = new SubmitOrderRequest(OrderType.Market, SecurityType.Base, Symbol.Empty, 0, 0, 0, DateTime.MaxValue, request.Tag);
             submit.SetResponse(OrderResponse.UnableToFindOrder(request));
+            submit.SetOrderId(request.OrderId);
             var ticket = new OrderTicket(transactionManager, submit);
             request.SetResponse(OrderResponse.UnableToFindOrder(request));
             ticket.AddUpdateRequest(request);
@@ -429,24 +546,38 @@ namespace QuantConnect.Orders
         /// <filterpriority>2</filterpriority>
         public override string ToString()
         {
-            var counts = "Request Count: " + RequestCount() + " Response Count: " + ResponseCount();
+            var counts = Invariant($"Request Count: {RequestCount()} Response Count: {ResponseCount()}");
             if (_order != null)
             {
-                return OrderId + ": " + _order + " " + counts;
+                return Invariant($"{OrderId}: {_order} {counts}");
             }
-            return OrderId + ": " + counts;
+
+            return Invariant($"{OrderId}: {counts}");
         }
 
         private int ResponseCount()
         {
-            return (_submitRequest.Response == OrderResponse.Unprocessed ? 0 : 1) 
-                 + (_cancelRequest == null || _cancelRequest.Response == OrderResponse.Unprocessed ? 0 : 1)
-                 + _updateRequests.Count(x => x.Response != OrderResponse.Unprocessed);
+            var count = (_submitRequest.Response == OrderResponse.Unprocessed ? 0 : 1) +
+                        _updateRequests.Count(x => x.Response != OrderResponse.Unprocessed);
+
+            lock (_cancelRequestLock)
+            {
+                count += _cancelRequest == null || _cancelRequest.Response == OrderResponse.Unprocessed ? 0 : 1;
+            }
+
+            return count;
         }
 
         private int RequestCount()
         {
-            return 1 + _updateRequests.Count + (_cancelRequest == null ? 0 : 1);
+            var count = 1 + _updateRequests.Count;
+
+            lock (_cancelRequestLock)
+            {
+                count += _cancelRequest == null ? 0 : 1;
+            }
+
+            return count;
         }
 
         /// <summary>
@@ -478,7 +609,7 @@ namespace QuantConnect.Orders
             {
                 return orderSelector(typedOrder);
             }
-            throw new ArgumentException(string.Format("Unable to access property {0} on order of type {1}", field, order.Type));
+            throw new ArgumentException(Invariant($"Unable to access property {field} on order of type {order.Type}"));
         }
     }
 }

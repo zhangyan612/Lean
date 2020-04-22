@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,7 +16,6 @@
 
 using System;
 using System.Collections;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using QuantConnect.Data;
@@ -193,18 +192,23 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators
         }
 
         /// <summary>
-        /// Brute force implementation for synchronizing the enumerator
+        /// Brute force implementation for synchronizing the enumerator.
+        /// Will remove enumerators returning false to the call to MoveNext.
+        /// Will not remove enumerators with Current Null returning true to the call to MoveNext
         /// </summary>
         private static IEnumerator<BaseData> GetBruteForceMethod(IEnumerator<BaseData>[] enumerators)
         {
             var ticks = DateTime.MaxValue.Ticks;
-            var collection = new ConcurrentDictionary<IEnumerator<BaseData>, int>();
+            var collection = new HashSet<IEnumerator<BaseData>>();
             foreach (var enumerator in enumerators)
             {
                 if (enumerator.MoveNext())
                 {
-                    ticks = Math.Min(ticks, enumerator.Current.EndTime.Ticks);
-                    collection.TryAdd(enumerator, 0);
+                    if (enumerator.Current != null)
+                    {
+                        ticks = Math.Min(ticks, enumerator.Current.EndTime.Ticks);
+                    }
+                    collection.Add(enumerator);
                 }
                 else
                 {
@@ -213,19 +217,25 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators
             }
 
             var frontier = new DateTime(ticks);
-            while (!collection.IsEmpty)
+            var toRemove = new List<IEnumerator<BaseData>>();
+            while (collection.Count > 0)
             {
                 var nextFrontierTicks = DateTime.MaxValue.Ticks;
-                foreach (var kvp in collection)
+                foreach (var enumerator in collection)
                 {
-                    var enumerator = kvp.Key;
-                    while (enumerator.Current.EndTime <= frontier)
+                    while (enumerator.Current == null || enumerator.Current.EndTime <= frontier)
                     {
-                        yield return enumerator.Current;
+                        if (enumerator.Current != null)
+                        {
+                            yield return enumerator.Current;
+                        }
                         if (!enumerator.MoveNext())
                         {
-                            int value;
-                            collection.TryRemove(enumerator, out value);
+                            toRemove.Add(enumerator);
+                            break;
+                        }
+                        if (enumerator.Current == null)
+                        {
                             break;
                         }
                     }
@@ -234,6 +244,15 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators
                     {
                         nextFrontierTicks = Math.Min(nextFrontierTicks, enumerator.Current.EndTime.Ticks);
                     }
+                }
+
+                if (toRemove.Count > 0)
+                {
+                    foreach (var enumerator in toRemove)
+                    {
+                        collection.Remove(enumerator);
+                    }
+                    toRemove.Clear();
                 }
 
                 frontier = new DateTime(nextFrontierTicks);

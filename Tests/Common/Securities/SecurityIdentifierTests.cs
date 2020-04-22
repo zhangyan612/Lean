@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,9 +15,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using Newtonsoft.Json;
 using NUnit.Framework;
-using QuantConnect.Securities;
+using QuantConnect.Algorithm.CSharp;
+using QuantConnect.Data.Auxiliary;
 
 namespace QuantConnect.Tests.Common.Securities
 {
@@ -111,7 +113,7 @@ namespace QuantConnect.Tests.Common.Securities
         [Test]
         public void Generates12Character()
         {
-            var sid1 = SecurityIdentifier.GenerateBase("123456789012", Market.USA);
+            var sid1 = SecurityIdentifier.GenerateBase(null, "123456789012", Market.USA);
             Assert.AreEqual("123456789012", sid1.Symbol);
             Console.WriteLine(sid1);
         }
@@ -219,9 +221,21 @@ namespace QuantConnect.Tests.Common.Securities
         }
 
         [Test]
+        public void PreviousEmptyFormatStillSupported()
+        {
+            Assert.AreEqual(SecurityIdentifier.Empty, SecurityIdentifier.Parse(" "));
+        }
+
+        [Test]
         public void RoundTripEmptyParse()
         {
             Assert.AreEqual(SecurityIdentifier.Empty, SecurityIdentifier.Parse(SecurityIdentifier.Empty.ToString()));
+        }
+
+        [Test]
+        public void RoundTripNoneParse()
+        {
+            Assert.AreEqual(SecurityIdentifier.None, SecurityIdentifier.Parse(SecurityIdentifier.None.ToString()));
         }
 
         [Test]
@@ -254,13 +268,47 @@ namespace QuantConnect.Tests.Common.Securities
         public void DeserializesFromSimpleStringWithinContainerClass()
         {
             var sid = new Container{sid =SPY};
-            var str = 
+            var str =
 @"
 {
-    'sid': '" + SPY + @"' 
+    'sid': '" + SPY + @"'
 }";
             var deserialized = JsonConvert.DeserializeObject<Container>(str);
             Assert.AreEqual(sid.sid, deserialized.sid);
+        }
+
+        [Test]
+        public void ParsesFromStringCorrectly()
+        {
+            const string value = "SPY R735QTJ8XC9X";
+            SecurityIdentifier sid;
+            Assert.IsTrue(SecurityIdentifier.TryParse(value, out sid));
+            Assert.AreEqual(sid.ToString(), value);
+        }
+
+        [Test]
+        public void TryParseFailsInvalidProperties()
+        {
+            const string value = "SPY WhatEver";
+            SecurityIdentifier sid;
+            Assert.IsFalse(SecurityIdentifier.TryParse(value, out sid));
+        }
+
+        [Test, Category("TravisExclude")]
+        public void ParsesFromStringFastEnough()
+        {
+            const string value = "SPY R735QTJ8XC9X";
+
+            var stopwatch = Stopwatch.StartNew();
+            for (var i = 0; i < 1000000; i++)
+            {
+                SecurityIdentifier sid;
+                SecurityIdentifier.TryParse(value, out sid);
+            }
+            stopwatch.Stop();
+            Console.WriteLine("Elapsed: " + stopwatch.Elapsed);
+
+            Assert.Less(stopwatch.Elapsed, TimeSpan.FromSeconds(2));
         }
 
         [Test]
@@ -276,6 +324,46 @@ namespace QuantConnect.Tests.Common.Securities
         public void ThrowsOnInvalidSymbolCharacters(string input)
         {
             new SecurityIdentifier(input, 0);
+        }
+
+        [Test]
+        public void GenerateEquityWithTickerUsingMapFile()
+        {
+            var expectedFirstDate = new DateTime(1998, 1, 2);
+            var sid = SecurityIdentifier.GenerateEquity("TWX", Market.USA, mapSymbol: true, mapFileProvider: new LocalDiskMapFileProvider());
+
+            Assert.AreEqual(sid.Date, expectedFirstDate);
+            Assert.AreEqual(sid.Symbol, "AOL");
+        }
+
+        [Test]
+        public void GenerateBaseDataWithTickerUsingMapFile()
+        {
+            var expectedFirstDate = new DateTime(1998, 1, 2);
+            var sid = SecurityIdentifier.GenerateBase(null, "TWX", Market.USA, mapSymbol: true);
+
+            Assert.AreEqual(sid.Date, expectedFirstDate);
+            Assert.AreEqual(sid.Symbol, "AOL");
+        }
+
+        [Test]
+        public void GenerateBase_SymbolAppendsDptTypeName_WhenBaseDataTypeIsNotNull()
+        {
+            var symbol = "BTC";
+            var expected = "BTC.Bitcoin";
+            var baseDataType = typeof(LiveTradingFeaturesAlgorithm.Bitcoin);
+            var sid = SecurityIdentifier.GenerateBase(baseDataType, symbol, Market.USA);
+            Assert.AreEqual(expected, sid.Symbol);
+        }
+
+        [Test]
+        public void GenerateBase_UsesProvidedSymbol_WhenBaseDataTypeIsNull()
+        {
+            var symbol = "BTC";
+            var expected = "BTC";
+            var baseDataType = (Type) null;
+            var sid = SecurityIdentifier.GenerateBase(baseDataType, symbol, Market.USA);
+            Assert.AreEqual(expected, sid.Symbol);
         }
 
         class Container

@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace QuantConnect.Brokerages.Oanda
 {
@@ -24,9 +25,61 @@ namespace QuantConnect.Brokerages.Oanda
     public class OandaSymbolMapper : ISymbolMapper
     {
         /// <summary>
+        /// Symbols that are both active and delisted
+        /// </summary>
+        public static List<Symbol> KnownSymbols
+        {
+            get
+            {
+                var symbols = new List<Symbol>();
+                var mapper = new OandaSymbolMapper();
+                foreach (var tp in KnownSymbolStrings)
+                {
+                    symbols.Add(mapper.GetLeanSymbol(tp, mapper.GetBrokerageSecurityType(tp), QuantConnect.Market.Oanda));
+                }
+                return symbols;
+            }
+        }
+
+        /// <summary>
+        /// Symbols that have been delisted from Oanda
+        /// </summary>
+        public static List<Symbol> DelistedSymbols
+        {
+            get
+            {
+                var symbols = new List<Symbol>();
+                var mapper = new OandaSymbolMapper();
+                foreach (var tp in DelistedSymbolStrings)
+                {
+                    symbols.Add(mapper.GetLeanSymbol(tp, mapper.GetBrokerageSecurityType(tp), QuantConnect.Market.Oanda));
+                }
+                return symbols;
+            }
+        }
+
+        /// <summary>
+        /// Symbols that are active on Oanda
+        /// </summary>
+        public static List<Symbol> ActiveSymbols
+        {
+            get
+            {
+                var symbols = new List<Symbol>();
+                var mapper = new OandaSymbolMapper();
+                foreach (var tp in KnownSymbolStrings.Where(x => !DelistedSymbolStrings.Contains(x)))
+                {
+                    symbols.Add(mapper.GetLeanSymbol(tp, mapper.GetBrokerageSecurityType(tp), QuantConnect.Market.Oanda));
+                }
+                return symbols;
+            }
+        }
+
+
+        /// <summary>
         /// The list of known Oanda symbols.
         /// </summary>
-        public static readonly HashSet<string> KnownSymbols = new HashSet<string>
+        public static readonly HashSet<string> KnownSymbolStrings = new HashSet<string>
         {
             "AU200_AUD",
             "AUD_CAD",
@@ -483,7 +536,10 @@ namespace QuantConnect.Brokerages.Oanda
             "ZAR_JPY"
         };
 
-        public static List<string> DelistedSymbols = new List<string>()
+        /// <summary>
+        /// The list of delisted/invalid Oanda symbols.
+        /// </summary>
+        public static HashSet<string> DelistedSymbolStrings = new HashSet<string>
         {
             "AUD_CNY",
             "AUD_CZK",
@@ -832,7 +888,7 @@ namespace QuantConnect.Brokerages.Oanda
         /// <returns>The Oanda symbol</returns>
         public string GetBrokerageSymbol(Symbol symbol)
         {
-            if (symbol == null || symbol == Symbol.Empty || string.IsNullOrWhiteSpace(symbol.Value))
+            if (symbol == null || string.IsNullOrWhiteSpace(symbol.Value))
                 throw new ArgumentException("Invalid symbol: " + (symbol == null ? "null" : symbol.ToString()));
 
             if (symbol.ID.SecurityType != SecurityType.Forex && symbol.ID.SecurityType != SecurityType.Cfd)
@@ -906,7 +962,7 @@ namespace QuantConnect.Brokerages.Oanda
         /// <returns>True if Oanda supports the symbol</returns>
         public bool IsKnownBrokerageSymbol(string brokerageSymbol)
         {
-            return KnownSymbols.Contains(brokerageSymbol);
+            return KnownSymbolStrings.Contains(brokerageSymbol) && !DelistedSymbolStrings.Contains(brokerageSymbol);
         }
 
         /// <summary>
@@ -916,12 +972,12 @@ namespace QuantConnect.Brokerages.Oanda
         /// <returns>True if Oanda supports the symbol</returns>
         public bool IsKnownLeanSymbol(Symbol symbol)
         {
-            if (symbol == null || string.IsNullOrWhiteSpace(symbol.Value) || symbol.Value.Length <= 3) 
+            if (symbol == null || string.IsNullOrWhiteSpace(symbol.Value) || symbol.Value.Length <= 3)
                 return false;
 
             var oandaSymbol = ConvertLeanSymbolToOandaSymbol(symbol.Value);
 
-            return KnownSymbols.Contains(oandaSymbol) && GetBrokerageSecurityType(oandaSymbol) == symbol.ID.SecurityType;
+            return IsKnownBrokerageSymbol(oandaSymbol) && GetBrokerageSecurityType(oandaSymbol) == symbol.ID.SecurityType;
         }
 
         /// <summary>
@@ -941,6 +997,5 @@ namespace QuantConnect.Brokerages.Oanda
             // All Oanda symbols end with '_XYZ', where XYZ is the quote currency
             return leanSymbol.Insert(leanSymbol.Length - 3, "_");
         }
-
     }
 }

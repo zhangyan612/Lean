@@ -1,11 +1,11 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,9 +16,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
+using System.Text;
 using QuantConnect.Data;
 using QuantConnect.Data.UniverseSelection;
+using QuantConnect.Interfaces;
 
 namespace QuantConnect.Algorithm.CSharp
 {
@@ -27,7 +28,10 @@ namespace QuantConnect.Algorithm.CSharp
     /// to be traded using the AddUniverse method. This method accepts a function that will return the
     /// desired current set of symbols. Return Universe.Unchanged if no universe changes should be made
     /// </summary>
-    public class DropboxUniverseSelectionAlgorithm : QCAlgorithm
+    /// <meta name="tag" content="using data" />
+    /// <meta name="tag" content="universes" />
+    /// <meta name="tag" content="custom universes" />
+    public class DropboxUniverseSelectionAlgorithm : QCAlgorithm, IRegressionAlgorithmDefinition
     {
         // the changes from the previous universe selection
         private SecurityChanges _changes = SecurityChanges.None;
@@ -46,52 +50,53 @@ namespace QuantConnect.Algorithm.CSharp
             UniverseSettings.Resolution = Resolution.Daily;
 
             // set our start and end for backtest mode
-            SetStartDate(2013, 01, 01);
-            SetEndDate(2013, 12, 31);
+            SetStartDate(2017, 07, 04);
+            SetEndDate(2018, 07, 04);
 
             // define a new custom universe that will trigger each day at midnight
             AddUniverse("my-dropbox-universe", Resolution.Daily, dateTime =>
             {
-                const string liveUrl = @"https://www.dropbox.com/s/2az14r5xbx4w5j6/daily-stock-picker-live.csv?dl=1";
-                const string backtestUrl = @"https://www.dropbox.com/s/rmiiktz0ntpff3a/daily-stock-picker-backtest.csv?dl=1";
-                var url = LiveMode ? liveUrl : backtestUrl;
-                using (var client = new WebClient())
+                // handle live mode file format
+                if (LiveMode)
                 {
-                    // handle live mode file format
-                    if (LiveMode)
-                    {
-                        // fetch the file from dropbox
-                        var file = client.DownloadString(url);
-                        // if we have a file for today, break apart by commas and return symbols
-                        if (file.Length > 0) return file.ToCsv();
-                        // no symbol today, leave universe unchanged
-                        return Universe.Unchanged;
-                    }
-
-                    // backtest - first cache the entire file
-                    if (_backtestSymbolsPerDay.Count == 0)
-                    {
-                        // fetch the file from dropbox only if we haven't cached the result already
-                        var file = client.DownloadString(url);
-
-                        // split the file into lines and add to our cache
-                        foreach (var line in file.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
-                        {
-                            var csv = line.ToCsv();
-                            var date = DateTime.ParseExact(csv[0], "yyyyMMdd", null);
-                            var symbols = csv.Skip(1).ToList();
-                            _backtestSymbolsPerDay[date] = symbols;
-                        }
-                    }
-
-                    // if we have symbols for this date return them, else specify Universe.Unchanged
-                    List<string> result;
-                    if (_backtestSymbolsPerDay.TryGetValue(dateTime.Date, out result))
-                    {
-                        return result;
-                    }
+                    // fetch the file from dropbox
+                    var file = Download(@"https://www.dropbox.com/s/2l73mu97gcehmh7/daily-stock-picker-live.csv?dl=1");
+                    // if we have a file for today, break apart by commas and return symbols
+                    if (file.Length > 0) return file.ToCsv();
+                    // no symbol today, leave universe unchanged
                     return Universe.Unchanged;
                 }
+
+                // backtest - first cache the entire file
+                if (_backtestSymbolsPerDay.Count == 0)
+                {
+                    // No need for headers for authorization with dropbox, these two lines are for example purposes
+                    var byteKey = Encoding.ASCII.GetBytes($"UserName:Password");
+                    // The headers must be passed to the Download method as list of key/value pair.
+                    var headers = new List<KeyValuePair<string, string>>
+                    {
+                        new KeyValuePair<string, string>("Authorization", $"Basic ({Convert.ToBase64String(byteKey)})")
+                    };
+
+                    var file = Download(@"https://www.dropbox.com/s/ae1couew5ir3z9y/daily-stock-picker-backtest.csv?dl=1", headers);
+
+                    // split the file into lines and add to our cache
+                    foreach (var line in file.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        var csv = line.ToCsv();
+                        var date = DateTime.ParseExact(csv[0], "yyyyMMdd", null);
+                        var symbols = csv.Skip(1).ToList();
+                        _backtestSymbolsPerDay[date] = symbols;
+                    }
+                }
+
+                // if we have symbols for this date return them, else specify Universe.Unchanged
+                List<string> result;
+                if (_backtestSymbolsPerDay.TryGetValue(dateTime.Date, out result))
+                {
+                    return result;
+                }
+                return Universe.Unchanged;
             });
         }
 
@@ -136,5 +141,62 @@ namespace QuantConnect.Algorithm.CSharp
             // each time our securities change we'll be notified here
             _changes = changes;
         }
+
+        /// <summary>
+        /// This is used by the regression test system to indicate if the open source Lean repository has the required data to run this algorithm.
+        /// </summary>
+        public bool CanRunLocally { get; } = true;
+
+        /// <summary>
+        /// This is used by the regression test system to indicate which languages this algorithm is written in.
+        /// </summary>
+        public Language[] Languages { get; } = { Language.CSharp, Language.Python };
+
+        /// <summary>
+        /// This is used by the regression test system to indicate what the expected statistics are from running the algorithm
+        /// </summary>
+        public Dictionary<string, string> ExpectedStatistics => new Dictionary<string, string>
+        {
+            {"Total Trades", "5059"},
+            {"Average Win", "0.08%"},
+            {"Average Loss", "-0.08%"},
+            {"Compounding Annual Return", "14.901%"},
+            {"Drawdown", "10.600%"},
+            {"Expectancy", "0.075"},
+            {"Net Profit", "14.901%"},
+            {"Sharpe Ratio", "1.068"},
+            {"Probabilistic Sharpe Ratio", "50.201%"},
+            {"Loss Rate", "45%"},
+            {"Win Rate", "55%"},
+            {"Profit-Loss Ratio", "0.97"},
+            {"Alpha", "0.137"},
+            {"Beta", "-0.066"},
+            {"Annual Standard Deviation", "0.121"},
+            {"Annual Variance", "0.015"},
+            {"Information Ratio", "0.08"},
+            {"Tracking Error", "0.171"},
+            {"Treynor Ratio", "-1.963"},
+            {"Total Fees", "$6806.57"},
+            {"Fitness Score", "0.694"},
+            {"Kelly Criterion Estimate", "0"},
+            {"Kelly Criterion Probability Value", "0"},
+            {"Sortino Ratio", "1.261"},
+            {"Return Over Maximum Drawdown", "1.404"},
+            {"Portfolio Turnover", "1.296"},
+            {"Total Insights Generated", "0"},
+            {"Total Insights Closed", "0"},
+            {"Total Insights Analysis Completed", "0"},
+            {"Long Insight Count", "0"},
+            {"Short Insight Count", "0"},
+            {"Long/Short Ratio", "100%"},
+            {"Estimated Monthly Alpha Value", "$0"},
+            {"Total Accumulated Estimated Alpha Value", "$0"},
+            {"Mean Population Estimated Insight Value", "$0"},
+            {"Mean Population Direction", "0%"},
+            {"Mean Population Magnitude", "0%"},
+            {"Rolling Averaged Population Direction", "0%"},
+            {"Rolling Averaged Population Magnitude", "0%"},
+            {"OrderListHash", "974523768"}
+        };
     }
 }

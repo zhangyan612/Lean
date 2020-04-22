@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -14,6 +14,7 @@
 */
 
 using System;
+using static QuantConnect.StringExtensions;
 
 namespace QuantConnect.Orders
 {
@@ -39,7 +40,7 @@ namespace QuantConnect.Orders
         }
 
         /// <summary>
-        /// Gets the time the request was created
+        /// Gets the UTC time the request was created
         /// </summary>
         public DateTime Time
         {
@@ -95,7 +96,7 @@ namespace QuantConnect.Orders
         {
             if (response == null)
             {
-                throw new ArgumentNullException("response", "Response can not be null");
+                throw new ArgumentNullException(nameof(response), "Response can not be null");
             }
 
             // if the response is an error, ignore the input status
@@ -112,7 +113,7 @@ namespace QuantConnect.Orders
         /// <filterpriority>2</filterpriority>
         public override string ToString()
         {
-            return string.Format("{0} UTC: Order: ({1}) - {2} Status: {3}", Time, OrderId, Tag, Status);
+            return Invariant($"{Time} UTC: Order: ({OrderId.ToStringInvariant()}) - {Tag} Status: {Status}");
         }
     }
 }

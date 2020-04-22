@@ -1,11 +1,11 @@
 /*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,6 +16,7 @@
 
 using System;
 using System.Collections.Generic;
+using NodaTime;
 using QuantConnect.Data;
 using QuantConnect.Securities;
 using QuantConnect.Util;
@@ -41,10 +42,12 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators
         /// <param name="exchange">The exchange used to determine when to insert fill forward data</param>
         /// <param name="fillForwardResolution">The resolution we'd like to receive data on</param>
         /// <param name="isExtendedMarketHours">True to use the exchange's extended market hours, false to use the regular market hours</param>
-        /// <param name="subscriptionEndTime">The end time of the subscrition, once passing this date the enumerator will stop</param>
+        /// <param name="subscriptionEndTime">The end time of the subscription, once passing this date the enumerator will stop</param>
         /// <param name="dataResolution">The source enumerator's data resolution</param>
-        public LiveFillForwardEnumerator(ITimeProvider timeProvider, IEnumerator<BaseData> enumerator, SecurityExchange exchange, IReadOnlyRef<TimeSpan> fillForwardResolution, bool isExtendedMarketHours, DateTime subscriptionEndTime, TimeSpan dataResolution)
-            : base(enumerator, exchange, fillForwardResolution, isExtendedMarketHours, subscriptionEndTime, dataResolution)
+        /// <param name="dataTimeZone">Time zone of the underlying source data</param>
+        /// <param name="subscriptionStartTime">The start time of the subscription</param>
+        public LiveFillForwardEnumerator(ITimeProvider timeProvider, IEnumerator<BaseData> enumerator, SecurityExchange exchange, IReadOnlyRef<TimeSpan> fillForwardResolution, bool isExtendedMarketHours, DateTime subscriptionEndTime, TimeSpan dataResolution, DateTimeZone dataTimeZone, DateTime subscriptionStartTime)
+            : base(enumerator, exchange, fillForwardResolution, isExtendedMarketHours, subscriptionEndTime, dataResolution, dataTimeZone, subscriptionStartTime)
         {
             _timeProvider = timeProvider;
         }
@@ -59,12 +62,13 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators
         /// <returns>True when a new fill forward piece of data was produced and should be emitted by this enumerator</returns>
         protected override bool RequiresFillForwardData(TimeSpan fillForwardResolution, BaseData previous, BaseData next, out BaseData fillForward)
         {
+            // convert times to UTC for accurate comparisons and differences across DST changes
             fillForward = null;
-            var nextExpectedDataPointTime = (previous.EndTime + fillForwardResolution);
+            var nextExpectedDataPointTimeUtc = previous.EndTime.ConvertToUtc(Exchange.TimeZone) + fillForwardResolution;
             if (next != null)
             {
                 // if not future data, just return the 'next'
-                if (next.EndTime <= nextExpectedDataPointTime)
+                if (next.EndTime.ConvertToUtc(Exchange.TimeZone) <= nextExpectedDataPointTimeUtc)
                 {
                     return false;
                 }
@@ -75,9 +79,8 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators
                 return true;
             }
 
-            // the underlying enumerator returned null, check to see if time has passed for fill fowarding
-            var currentLocalTime = _timeProvider.GetUtcNow().ConvertFromUtc(Exchange.TimeZone);
-            if (nextExpectedDataPointTime <= currentLocalTime)
+            // the underlying enumerator returned null, check to see if time has passed for fill forwarding
+            if (nextExpectedDataPointTimeUtc <= _timeProvider.GetUtcNow())
             {
                 var clone = previous.Clone(true);
                 clone.Time = previous.Time + fillForwardResolution;

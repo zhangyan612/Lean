@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -14,14 +14,19 @@
 */
 
 using QuantConnect.Data;
+using QuantConnect.Data.Market;
 using QuantConnect.Indicators;
 
 namespace QuantConnect.Algorithm.CSharp
 {
     /// <summary>
     /// This algorithm demonstrates using the history provider to retrieve data
-    /// to warm up indicators before data is received
+    /// to warm up indicators before data is received.
     /// </summary>
+    /// <meta name="tag" content="indicators" />
+    /// <meta name="tag" content="history" />
+    /// <meta name="tag" content="history and warm up" />
+    /// <meta name="tag" content="using data" />
     public class WarmupHistoryAlgorithm : QCAlgorithm
     {
         private ExponentialMovingAverage fast, slow;
@@ -41,15 +46,15 @@ namespace QuantConnect.Algorithm.CSharp
             slow = EMA("EURUSD", 3600);
 
             // 3601 because rolling window waits for one to fall off the back to be considered ready
-            var history = History("EURUSD", 3601);
+            var history = History<QuoteBar>("EURUSD", 3601);
             foreach (var bar in history)
             {
                 fast.Update(bar.EndTime, bar.Close);
                 slow.Update(bar.EndTime, bar.Close);
             }
 
-            Log(string.Format("FAST IS {0} READY. Samples: {1}", fast.IsReady ? "" : "NOT", fast.Samples));
-            Log(string.Format("SLOW IS {0} READY. Samples: {1}", slow.IsReady ? "" : "NOT", slow.Samples));
+            Log($"FAST IS {(fast.IsReady ? "" : "NOT")} READY. Samples: {fast.Samples.ToStringInvariant()}");
+            Log($"SLOW IS {(slow.IsReady ? "" : "NOT")} READY. Samples: {slow.Samples.ToStringInvariant()}");
         }
 
         /// <summary>

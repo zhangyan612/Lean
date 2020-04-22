@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,6 +19,7 @@ using System.Diagnostics;
 using System.Linq;
 using NUnit.Framework;
 using QuantConnect.Securities;
+using DayOfWeek = System.DayOfWeek;
 
 namespace QuantConnect.Tests.Common.Securities
 {
@@ -218,6 +219,54 @@ namespace QuantConnect.Tests.Common.Securities
         }
 
         [Test]
+        public void MarketIsNotOpenBeforeLateOpen()
+        {
+            var exchangeHours = CreateForexSecurityExchangeHours();
+
+            var localDateTime = new DateTime(2019, 1, 1, 16, 59, 59);
+            Assert.IsFalse(exchangeHours.IsOpen(localDateTime, false));
+        }
+
+        [Test]
+        public void MarketIsOpenAfterLateOpen()
+        {
+            var exchangeHours = CreateForexSecurityExchangeHours();
+
+            var localDateTime = new DateTime(2019, 1, 1, 17, 0, 1);
+            Assert.IsTrue(exchangeHours.IsOpen(localDateTime, false));
+        }
+
+        [Test]
+        public void MarketIsNotOpenForIntervalBeforeLateOpen()
+        {
+            var exchangeHours = CreateForexSecurityExchangeHours();
+
+            var startLocalDateTime = new DateTime(2019, 1, 1, 16, 30, 0);
+            var endLocalDateTime = new DateTime(2019, 1, 1, 17, 0, 0);
+            Assert.IsFalse(exchangeHours.IsOpen(startLocalDateTime, endLocalDateTime, false));
+        }
+
+        [Test]
+        public void GetNextMarketOpenWorksBeforeLateOpen()
+        {
+            var exchangeHours = CreateForexSecurityExchangeHours();
+
+            var startTime = new DateTime(2019, 1, 1, 16, 59, 59);
+            var nextMarketOpen = exchangeHours.GetNextMarketOpen(startTime, false);
+            Assert.AreEqual(new DateTime(2019, 1, 1, 17, 0, 0), nextMarketOpen);
+        }
+
+        [Test]
+        public void GetNextMarketOpenWorksAfterLateOpen()
+        {
+            var exchangeHours = CreateForexSecurityExchangeHours();
+
+            var startTime = new DateTime(2019, 1, 1, 17, 0, 1);
+            var nextMarketOpen = exchangeHours.GetNextMarketOpen(startTime, false);
+            Assert.AreEqual(new DateTime(2019, 1, 2, 0, 0, 0), nextMarketOpen);
+        }
+
+        [Test]
         public void Benchmark()
         {
             var forex = CreateForexSecurityExchangeHours();
@@ -238,6 +287,25 @@ namespace QuantConnect.Tests.Common.Securities
             Console.WriteLine("forex1: " + stopwatch.Elapsed);
         }
 
+        [Test]
+        public void RegularMarketDurationIsFromMostCommonLocalMarketHours()
+        {
+            var exchangeHours = new SecurityExchangeHours(TimeZones.NewYork, Enumerable.Empty<DateTime>(),
+                new Dictionary<DayOfWeek, LocalMarketHours>
+                {
+                    // fake market hours schedule with random durations, the most common of which is 5 hours and 2 hours, it will pick the larger
+                    {DayOfWeek.Sunday, new LocalMarketHours(DayOfWeek.Sunday, TimeSpan.FromHours(4), TimeSpan.FromHours(6))},           //2hr
+                    {DayOfWeek.Monday, new LocalMarketHours(DayOfWeek.Monday, TimeSpan.FromHours(13), TimeSpan.FromHours(15))},         //2hr
+                    {DayOfWeek.Tuesday, new LocalMarketHours(DayOfWeek.Tuesday, TimeSpan.FromHours(5), TimeSpan.FromHours(10))},        //5hr
+                    {DayOfWeek.Wednesday, new LocalMarketHours(DayOfWeek.Wednesday, TimeSpan.FromHours(5), TimeSpan.FromHours(10))},    //5hr
+                    {DayOfWeek.Thursday, new LocalMarketHours(DayOfWeek.Thursday, TimeSpan.FromHours(1), TimeSpan.FromHours(23))},      //22hr
+                    {DayOfWeek.Friday, new LocalMarketHours(DayOfWeek.Friday, TimeSpan.FromHours(0), TimeSpan.FromHours(23))},          //23hr
+                    {DayOfWeek.Saturday, new LocalMarketHours(DayOfWeek.Saturday, TimeSpan.FromHours(3), TimeSpan.FromHours(23))},      //20hr
+                }, new Dictionary<DateTime, TimeSpan>(), new Dictionary<DateTime, TimeSpan>());
+
+            Assert.AreEqual(TimeSpan.FromHours(5), exchangeHours.RegularMarketDuration);
+        }
+
         public static SecurityExchangeHours CreateForexSecurityExchangeHours()
         {
             var sunday = new LocalMarketHours(DayOfWeek.Sunday, new TimeSpan(17, 0, 0), TimeSpan.FromTicks(Time.OneDay.Ticks - 1));
@@ -248,11 +316,15 @@ namespace QuantConnect.Tests.Common.Securities
             var friday = new LocalMarketHours(DayOfWeek.Friday, TimeSpan.Zero, new TimeSpan(17, 0, 0));
             var saturday = LocalMarketHours.ClosedAllDay(DayOfWeek.Saturday);
 
-            var earlyCloses = new Dictionary<DateTime, TimeSpan>();
-            var exchangeHours = new SecurityExchangeHours(TimeZones.NewYork, USHoliday.Dates.Select(x => x.Date), new[]
+            var holidays = USHoliday.Dates.Select(x => x.Date).ToList();
+            holidays.Remove(new DateTime(2019, 1, 1));  // not a forex holiday
+
+            var earlyCloses = new Dictionary<DateTime, TimeSpan> { { new DateTime(2018, 12, 31), new TimeSpan(17, 0, 0) } };
+            var lateOpens = new Dictionary<DateTime, TimeSpan> { { new DateTime(2019, 1, 1), new TimeSpan(17, 0, 0) } };
+            var exchangeHours = new SecurityExchangeHours(TimeZones.NewYork, holidays, new[]
             {
                 sunday, monday, tuesday, wednesday, thursday, friday//, saturday
-            }.ToDictionary(x => x.DayOfWeek), earlyCloses);
+            }.ToDictionary(x => x.DayOfWeek), earlyCloses, lateOpens);
             return exchangeHours;
         }
 
@@ -267,10 +339,11 @@ namespace QuantConnect.Tests.Common.Securities
             var saturday = LocalMarketHours.ClosedAllDay(DayOfWeek.Saturday);
 
             var earlyCloses = new Dictionary<DateTime, TimeSpan> { { new DateTime(2016, 11, 25), new TimeSpan(13, 0, 0) } };
+            var lateOpens = new Dictionary<DateTime, TimeSpan>();
             var exchangeHours = new SecurityExchangeHours(TimeZones.NewYork, USHoliday.Dates.Select(x => x.Date), new[]
             {
                 sunday, monday, tuesday, wednesday, thursday, friday, saturday
-            }.ToDictionary(x => x.DayOfWeek), earlyCloses);
+            }.ToDictionary(x => x.DayOfWeek), earlyCloses, lateOpens);
             return exchangeHours;
         }
     }

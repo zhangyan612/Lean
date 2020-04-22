@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -14,20 +14,18 @@
 */
 
 using System;
-using QuantConnect.Data;
-using System.Collections.Generic;
 using System.IO;
-using QuantConnect.Data.Consolidators;
-using QuantConnect.Data.Market;
-using QuantConnect.Util;
 using System.Linq;
 using System.Threading;
+using QuantConnect.Data.Consolidators;
+using QuantConnect.Data.Market;
 using QuantConnect.Logging;
+using QuantConnect.Util;
 
 namespace QuantConnect.ToolBox.AlgoSeekFuturesConverter
 {
     /// <summary>
-    /// Processor for caching and consolidating ticks; 
+    /// Processor for caching and consolidating ticks;
     /// then flushing the ticks in memory to disk when triggered.
     /// </summary>
     public class AlgoSeekFuturesProcessor
@@ -38,7 +36,7 @@ namespace QuantConnect.ToolBox.AlgoSeekFuturesConverter
         private Symbol _symbol;
         private TickType _tickType;
         private Resolution _resolution;
-        private StreamWriter _streamWriter;
+        private LazyStreamWriter _streamWriter;
         private string _dataDirectory;
         private IDataConsolidator _consolidator;
         private DateTime _referenceDate;
@@ -96,13 +94,21 @@ namespace QuantConnect.ToolBox.AlgoSeekFuturesConverter
         }
 
         /// <summary>
-        /// Type of this futures processor. 
+        /// Type of this futures processor.
         /// ASOP's are grouped trade type for file writing.
         /// </summary>
         public TickType TickType
         {
             get { return _tickType; }
             set { _tickType = value; }
+        }
+
+        /// <summary>
+        /// If no data has been consolidated, do not write to disk
+        /// </summary>
+        public bool ShouldWriteToDisk()
+        {
+            return _consolidator.Consolidated != null;
         }
 
         /// <summary>
@@ -149,17 +155,17 @@ namespace QuantConnect.ToolBox.AlgoSeekFuturesConverter
 
             try
             {
-                _streamWriter = new StreamWriter(file);
+                _streamWriter = new LazyStreamWriter(file);
             }
             catch (Exception err)
             {
                 // we are unable to open new file - it is already opened due to bug in algoseek data
                 Log.Error("File: {0} Err: {1} Source: {2} Stack: {3}", file, err.Message, err.Source, err.StackTrace);
-                var newRandomizedName = (file + "-" + Math.Abs(file.GetHashCode()).ToString()).Replace(".csv", string.Empty) + ".csv";
+                var newRandomizedName = (file + "-" + Math.Abs(file.GetHashCode()).ToStringInvariant()).Replace(".csv", string.Empty) + ".csv";
 
                 // we store the information under different (randomized) name
                 Log.Trace("Changing name from {0} to {1}", file, newRandomizedName);
-                _streamWriter = new StreamWriter(newRandomizedName);
+                _streamWriter = new LazyStreamWriter(newRandomizedName);
             }
 
             // On consolidating the bars put the bar into a queue in memory to be written to disk later.
@@ -228,7 +234,7 @@ namespace QuantConnect.ToolBox.AlgoSeekFuturesConverter
         {
             if (OS.IsWindows)
             {
-                if (_windowsRestrictedNames.Contains(symbol.Value.ToLower()))
+                if (_windowsRestrictedNames.Contains(symbol.Value.ToLowerInvariant()))
                 {
                     symbol = Symbol.CreateFuture(SafeName(symbol.Underlying.Value), Market.USA, symbol.ID.Date);
                 }
@@ -241,7 +247,10 @@ namespace QuantConnect.ToolBox.AlgoSeekFuturesConverter
             {
                 foreach (var name in _windowsRestrictedNames)
                 {
-                    fileName = fileName.Replace(name, "_" + name);
+                    // The 'con' restricted filename will corrupt the 'seCONed' filepath
+                    var restrictedFilePath = Path.DirectorySeparatorChar + name;
+                    var safeFilePath = Path.DirectorySeparatorChar + "_" + name;
+                    fileName = fileName.Replace(restrictedFilePath, safeFilePath);
                 }
             }
             return fileName;

@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -14,8 +14,10 @@
 */
 
 using QuantConnect.Brokerages;
+using QuantConnect.Data;
 using QuantConnect.Data.Market;
 using QuantConnect.Securities;
+using System.Linq;
 
 namespace QuantConnect.Algorithm.CSharp
 {
@@ -25,16 +27,20 @@ namespace QuantConnect.Algorithm.CSharp
     /// has been created and can be used to security models and other settings,
     /// such as data normalization mode
     /// </summary>
+    /// <meta name="tag" content="using data" />
+    /// <meta name="tag" content="securities and portfolio" />
+    /// <meta name="tag" content="trading and orders" />
     public class CustomSecurityInitializerAlgorithm : QCAlgorithm
     {
         public override void Initialize()
         {
             // set our initializer to our custom type
-            SetBrokerageModel(BrokerageName.TradierBrokerage);
-            SetSecurityInitializer(new CustomSecurityInitializer(BrokerageModel, new FuncSecuritySeeder(GetLastKnownPrice), DataNormalizationMode.Raw));
+            SetBrokerageModel(BrokerageName.InteractiveBrokersBrokerage);
+            var funcSecuritySeeder = new FuncSecuritySeeder(CustomSeedFunction);
+            SetSecurityInitializer(new CustomSecurityInitializer(BrokerageModel, funcSecuritySeeder, DataNormalizationMode.Raw));
 
-            SetStartDate(2012, 01, 01);
-            SetEndDate(2013, 01, 01);
+            SetStartDate(2013, 10, 01);
+            SetEndDate(2013, 11, 01);
 
             AddSecurity(SecurityType.Equity, "SPY", Resolution.Hour);
         }
@@ -45,6 +51,19 @@ namespace QuantConnect.Algorithm.CSharp
             {
                 SetHoldings("SPY", 1);
             }
+        }
+
+        private BaseData CustomSeedFunction(Security security)
+        {
+            var resolution = Resolution.Hour;
+            var history = History(new[] { security.Symbol }, 1, resolution);
+
+            if (history.Any() && history.First().Values.Any())
+            {
+                return history.First().Values.First();
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -74,11 +93,10 @@ namespace QuantConnect.Algorithm.CSharp
             /// Initializes the specified security by setting up the models
             /// </summary>
             /// <param name="security">The security to be initialized</param>
-            /// <param name="seedSecurity">True to seed the security, false otherwise</param>
-            public override void Initialize(Security security, bool seedSecurity)
+            public override void Initialize(Security security)
             {
                 // first call the default implementation
-                base.Initialize(security, seedSecurity);
+                base.Initialize(security);
 
                 // now apply our data normalization mode
                 security.SetDataNormalizationMode(_dataNormalizationMode);

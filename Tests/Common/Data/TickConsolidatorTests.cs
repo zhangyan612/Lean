@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -78,9 +78,40 @@ namespace QuantConnect.Tests.Common.Data
             Assert.AreEqual(bar2.Value, newTradeBar.High);
             Assert.AreEqual(bar3.Value, newTradeBar.Low);
             Assert.AreEqual(bar4.Value, newTradeBar.Close);
+            Assert.AreEqual(bar4.EndTime, newTradeBar.EndTime);
             Assert.AreEqual(bar1.Quantity + bar2.Quantity + bar3.Quantity + bar4.Quantity, newTradeBar.Volume);
         }
 
+        [Test]
+        public void DoesNotConsolidateDifferentSymbols()
+        {
+            var consolidator = new TickConsolidator(2);
+
+            var reference = DateTime.Today;
+
+            var tick1 = new Tick
+            {
+                Symbol = Symbols.AAPL,
+                Time = reference,
+                BidPrice = 1000,
+                BidSize = 20,
+                TickType = TickType.Quote,
+            };
+
+            var tick2 = new Tick
+            {
+                Symbol = Symbols.ZNGA,
+                Time = reference,
+                BidPrice = 20,
+                BidSize = 30,
+                TickType = TickType.Quote,
+            };
+
+            consolidator.Update(tick1);
+
+            Exception ex = Assert.Throws<InvalidOperationException>(() => consolidator.Update(tick2));
+            Assert.That(ex.Message, Is.StringContaining("is not the same"));
+        }
 
         [Test]
         public void AggregatesPeriodInCountModeWithDailyData()
@@ -98,8 +129,8 @@ namespace QuantConnect.Tests.Common.Data
 
             consolidator.Update(new Tick { Time = reference.AddMilliseconds(1)});
             Assert.IsNotNull(consolidated);
- 
-            // sadly the first emit will be off by the data resolution since we 'swallow' a point, so to 
+
+            // sadly the first emit will be off by the data resolution since we 'swallow' a point, so to
             Assert.AreEqual(TimeSpan.FromMilliseconds(1), consolidated.Period);
             consolidated = null;
 
@@ -245,6 +276,60 @@ namespace QuantConnect.Tests.Common.Data
             Assert.AreEqual(consolidated.Time, reference.AddSeconds(60));
             Assert.AreEqual(consolidated.Open, tick3.Value);
             Assert.AreEqual(consolidated.Close, tick5.Value);
+        }
+
+        [Test]
+        public void ProcessesTradeTicksOnly()
+        {
+            TradeBar consolidated = null;
+            var consolidator = new TickConsolidator(TimeSpan.FromMinutes(1));
+            consolidator.DataConsolidated += (sender, bar) =>
+            {
+                consolidated = bar;
+            };
+
+            var reference = new DateTime(2015, 06, 02);
+            var tick1 = new Tick
+            {
+                Symbol = Symbols.SPY,
+                Time = reference.AddSeconds(3),
+                Value = 200m
+            };
+            consolidator.Update(tick1);
+            Assert.IsNull(consolidated);
+
+            var tick2 = new Tick
+            {
+                Symbol = Symbols.SPY,
+                Time = reference.AddSeconds(10),
+                Value = 20000m,
+                TickType = TickType.OpenInterest
+            };
+            consolidator.Update(tick2);
+            Assert.IsNull(consolidated);
+
+            var tick3 = new Tick
+            {
+                Symbol = Symbols.SPY,
+                Time = reference.AddSeconds(10),
+                Value = 10000m,
+                TickType = TickType.Quote
+            };
+            consolidator.Update(tick3);
+            Assert.IsNull(consolidated);
+
+            var tick4 = new Tick
+            {
+                Symbol = Symbols.SPY,
+                Time = reference.AddSeconds(61),
+                Value = 250m
+            };
+            consolidator.Update(tick4);
+            Assert.IsNotNull(consolidated);
+
+            Assert.AreEqual(consolidated.Time, reference);
+            Assert.AreEqual(consolidated.Open, tick1.Value);
+            Assert.AreEqual(consolidated.Close, tick1.Value);
         }
 
     }

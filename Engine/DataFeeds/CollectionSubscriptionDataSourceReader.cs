@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,7 +18,6 @@ using QuantConnect.Data;
 using QuantConnect.Data.UniverseSelection;
 using QuantConnect.Interfaces;
 using QuantConnect.Lean.Engine.DataFeeds.Transport;
-using QuantConnect.Util;
 
 namespace QuantConnect.Lean.Engine.DataFeeds
 {
@@ -28,7 +27,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
     /// </summary>
     public class CollectionSubscriptionDataSourceReader : ISubscriptionDataSourceReader
     {
-        
+
         private readonly DateTime _date;
         private readonly bool _isLiveMode;
         private readonly BaseData _factory;
@@ -48,7 +47,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             _date = date;
             _config = config;
             _isLiveMode = isLiveMode;
-            _factory = (BaseData)ObjectActivator.GetActivator(config.Type).Invoke(new object[0]);
+            _factory = _config.GetBaseDataInstance();
         }
 
         /// <summary>
@@ -58,7 +57,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         public event EventHandler<InvalidSourceEventArgs> InvalidSource;
 
         /// <summary>
-        /// Event fired when an exception is thrown during a call to 
+        /// Event fired when an exception is thrown during a call to
         /// <see cref="BaseData.Reader(SubscriptionDataConfig, string, DateTime, bool)"/>
         /// </summary>
         public event EventHandler<ReaderErrorEventArgs> ReaderError;
@@ -70,43 +69,80 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         /// <returns>An <see cref="IEnumerable{BaseData}"/> that contains the data in the source</returns>
         public IEnumerable<BaseData> Read(SubscriptionDataSource source)
         {
+            SubscriptionDataSourceReader.CheckRemoteFileCache();
+
             IStreamReader reader = null;
-            var instances = new BaseDataCollection();
             try
             {
-                switch (source.TransportMedium)
+                try
                 {
-                    default:
-                    case SubscriptionTransportMedium.Rest:
-                        reader = new RestSubscriptionStreamReader(source.Source);
-                        break;
-                    case SubscriptionTransportMedium.LocalFile:
-                        reader = new LocalFileSubscriptionStreamReader(_dataCacheProvider, source.Source);
-                        break;
-                    case SubscriptionTransportMedium.RemoteFile:
-                        reader = new RemoteFileSubscriptionStreamReader(_dataCacheProvider, source.Source, Globals.Cache);
-                        break;
+                    switch (source.TransportMedium)
+                    {
+                        default:
+                        case SubscriptionTransportMedium.Rest:
+                            reader = new RestSubscriptionStreamReader(source.Source, source.Headers, _isLiveMode);
+                            break;
+                        case SubscriptionTransportMedium.LocalFile:
+                            reader = new LocalFileSubscriptionStreamReader(_dataCacheProvider, source.Source);
+                            break;
+                        case SubscriptionTransportMedium.RemoteFile:
+                            reader = new RemoteFileSubscriptionStreamReader(_dataCacheProvider, source.Source, Globals.Cache, source.Headers);
+                            break;
+                    }
+                }
+                catch (Exception e)
+                {
+                    OnInvalidSource(source, e);
+                    yield break;
+                }
+
+                if (reader.EndOfStream)
+                {
+                    OnInvalidSource(source, new Exception($"The reader was empty for source: ${source.Source}"));
+                    yield break;
                 }
 
                 var raw = "";
-                try
+                while (!reader.EndOfStream)
                 {
-                    raw = reader.ReadLine();
-                    var result = _factory.Reader(_config, raw, _date, _isLiveMode);
-                    instances = result as BaseDataCollection;
-                    if (instances == null)
+                    BaseDataCollection instances = null;
+                    try
                     {
-                        OnInvalidSource(source, new Exception("Reader must generate a BaseDataCollection with the FileFormat.Collection"));
+                        raw = reader.ReadLine();
+                        var result = _factory.Reader(_config, raw, _date, _isLiveMode);
+                        instances = result as BaseDataCollection;
+                        if (instances == null && !reader.ShouldBeRateLimited)
+                        {
+                            OnInvalidSource(source, new Exception("Reader must generate a BaseDataCollection with the FileFormat.Collection"));
+                            continue;
+                        }
                     }
-                }
-                catch (Exception err)
-                {
-                    OnReaderError(raw, err);
-                }
+                    catch (Exception err)
+                    {
+                        OnReaderError(raw, err);
+                        if (!reader.ShouldBeRateLimited)
+                        {
+                            continue;
+                        }
+                    }
 
-                foreach (var instance in instances.Data)
-                {
-                    yield return instance;
+                    if (_isLiveMode
+                        // this shouldn't happen, rest reader is the only one to be rate limited
+                        // and in live mode, but just in case...
+                        || instances == null && reader.ShouldBeRateLimited)
+                    {
+                        yield return instances;
+                    }
+                    else
+                    {
+                        foreach (var instance in instances.Data)
+                        {
+                            if (instance != null && instance.EndTime != default(DateTime))
+                            {
+                                yield return instance;
+                            }
+                        }
+                    }
                 }
             }
             finally

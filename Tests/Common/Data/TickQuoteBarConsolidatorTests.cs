@@ -94,6 +94,7 @@ namespace QuantConnect.Tests.Common.Data
 
             Assert.AreEqual(Symbols.SPY, quoteBar.Symbol);
             Assert.AreEqual(tick1.Time, quoteBar.Time);
+            Assert.AreEqual(tick4.EndTime, quoteBar.EndTime);
             Assert.AreEqual(tick1.BidPrice, quoteBar.Bid.Open);
             Assert.AreEqual(tick1.BidPrice, quoteBar.Bid.Low);
             Assert.AreEqual(tick3.BidPrice, quoteBar.Bid.High);
@@ -105,6 +106,37 @@ namespace QuantConnect.Tests.Common.Data
             Assert.AreEqual(tick2.AskPrice, quoteBar.Ask.High);
             Assert.AreEqual(tick4.AskPrice, quoteBar.Ask.Close);
             Assert.AreEqual(tick4.AskSize, quoteBar.LastAskSize);
+        }
+
+        [Test]
+        public void DoesNotConsolidateDifferentSymbols()
+        {
+            var consolidator = new TickQuoteBarConsolidator(2);
+
+            var reference = DateTime.Today;
+
+            var tick1 = new Tick
+            {
+                Symbol = Symbols.AAPL,
+                Time = reference,
+                BidPrice = 1000,
+                BidSize = 20,
+                TickType = TickType.Quote,
+            };
+
+            var tick2 = new Tick
+            {
+                Symbol = Symbols.ZNGA,
+                Time = reference,
+                BidPrice = 20,
+                BidSize = 30,
+                TickType = TickType.Quote,
+            };
+
+            consolidator.Update(tick1);
+
+            Exception ex = Assert.Throws<InvalidOperationException>(() => consolidator.Update(tick2));
+            Assert.That(ex.Message, Is.StringContaining("is not the same"));
         }
     }
 }

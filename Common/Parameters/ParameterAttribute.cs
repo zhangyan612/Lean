@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -35,8 +35,7 @@ namespace QuantConnect.Parameters
         public const BindingFlags BindingFlags = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance;
 
         private static readonly string ParameterAttributeNameProperty = "Name";
-        private static readonly string ParameterAttributeFullName = typeof (ParameterAttribute).FullName;
-        
+
         /// <summary>
         /// Gets the name of this parameter
         /// </summary>
@@ -60,7 +59,7 @@ namespace QuantConnect.Parameters
         /// <param name="instance">The instance to set parameters on</param>
         public static void ApplyAttributes(Dictionary<string, string> parameters, object instance)
         {
-            if (instance == null) throw new ArgumentNullException("instance");
+            if (instance == null) throw new ArgumentNullException(nameof(instance));
 
             var type = instance.GetType();
 
@@ -74,7 +73,7 @@ namespace QuantConnect.Parameters
                 // this line make static analysis a little happier, but should never actually throw
                 if (fieldInfo == null && propertyInfo == null)
                 {
-                    throw new Exception("Resolved member that is neither FieldInfo or PropertyInfo");
+                    throw new InvalidOperationException("Resolved member that is neither FieldInfo or PropertyInfo");
                 }
 
                 // check the member for our custom attribute
@@ -91,8 +90,8 @@ namespace QuantConnect.Parameters
                 // if it's a read-only property with a parameter value we can't really do anything, bail
                 if (propertyInfo != null && !propertyInfo.CanWrite)
                 {
-                    var message = string.Format("The specified property is read only: {0}.{1}", propertyInfo.DeclaringType, propertyInfo.Name);
-                    throw new Exception(message);
+                    var message = $"The specified property is read only: {propertyInfo.DeclaringType}.{propertyInfo.Name}";
+                    throw new InvalidOperationException(message);
                 }
 
                 // resolve the member type
@@ -123,29 +122,43 @@ namespace QuantConnect.Parameters
             var parameters = new Dictionary<string, string>();
             foreach (var type in assembly.GetTypes())
             {
-                Log.Debug("ParameterAttribute.GetParametersFromAssembly(): Checking type " + type.Name);
-                foreach (var field in type.GetFields(BindingFlags))
+                Log.Debug($"ParameterAttribute.GetParametersFromAssembly(): Checking type {type.Name}");
+                foreach (var kvp in GetParametersFromType(type))
                 {
-                    var attribute = field.GetCustomAttribute<ParameterAttribute>();
-                    if (attribute != null)
-                    {
-                        var parameterName = attribute.Name ?? field.Name;
-                        parameters[parameterName] = field.FieldType.GetBetterTypeName();
-                    }
-                }
-                foreach (var property in type.GetProperties(BindingFlags))
-                {
-                    // ignore non-writeable properties
-                    if (!property.CanWrite) continue;
-                    var attribute = property.GetCustomAttribute<ParameterAttribute>();
-                    if (attribute != null)
-                    {
-                        var parameterName = attribute.Name ?? property.Name;
-                        parameters[parameterName] = property.PropertyType.Name;
-                    }
+                    parameters[kvp.Key] = kvp.Value;
                 }
             }
             return parameters;
+        }
+
+        /// <summary>
+        /// Resolves all parameter attributes from the specified type
+        /// </summary>
+        /// <param name="type">The type to inspect</param>
+        /// <returns>Parameters dictionary keyed by parameter name with a value of the member type</returns>
+        public static IEnumerable<KeyValuePair<string, string>> GetParametersFromType(Type type)
+        {
+            foreach (var field in type.GetFields(BindingFlags))
+            {
+                var attribute = field.GetCustomAttribute<ParameterAttribute>();
+                if (attribute != null)
+                {
+                    var parameterName = attribute.Name ?? field.Name;
+                    yield return new KeyValuePair<string, string>(parameterName, field.FieldType.GetBetterTypeName());
+                }
+            }
+
+            foreach (var property in type.GetProperties(BindingFlags))
+            {
+                // ignore non-writeable properties
+                if (!property.CanWrite) continue;
+                var attribute = property.GetCustomAttribute<ParameterAttribute>();
+                if (attribute != null)
+                {
+                    var parameterName = attribute.Name ?? property.Name;
+                    yield return new KeyValuePair<string, string>(parameterName, property.PropertyType.GetBetterTypeName());
+                }
+            }
         }
     }
 }

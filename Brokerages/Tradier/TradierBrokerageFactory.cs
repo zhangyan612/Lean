@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -22,6 +22,7 @@ using QuantConnect.Configuration;
 using QuantConnect.Interfaces;
 using QuantConnect.Logging;
 using QuantConnect.Packets;
+using QuantConnect.Securities;
 using QuantConnect.Util;
 
 namespace QuantConnect.Brokerages.Tradier
@@ -110,9 +111,9 @@ namespace QuantConnect.Brokerages.Tradier
             get
             {
                 string accessToken, refreshToken, issuedAt, lifeSpan;
-                
+
                 // always need to grab account ID from configuration
-                var accountID = Configuration.AccountID.ToString();
+                var accountID = Configuration.AccountID.ToStringInvariant();
                 var data = new Dictionary<string, string>();
                 if (File.Exists(TokensFile))
                 {
@@ -141,10 +142,8 @@ namespace QuantConnect.Brokerages.Tradier
         /// <summary>
         /// Gets a new instance of the <see cref="TradierBrokerageModel"/>
         /// </summary>
-        public override IBrokerageModel BrokerageModel
-        {
-            get { return new TradierBrokerageModel(); }
-        }
+        /// <param name="orderProvider">The order provider</param>
+        public override IBrokerageModel GetBrokerageModel(IOrderProvider orderProvider) => new TradierBrokerageModel();
 
         /// <summary>
         /// Creates a new IBrokerage instance
@@ -171,7 +170,7 @@ namespace QuantConnect.Brokerages.Tradier
                     File.WriteAllText(TokensFile, JsonConvert.SerializeObject(args, Formatting.Indented));
                 };
             }
-        
+
             brokerage.SetTokens(job.UserId, accessToken, refreshToken, issuedAt, lifeSpan);
 
             //Add the brokerage to the composer to ensure its accessible to the live data feed.
@@ -200,7 +199,7 @@ namespace QuantConnect.Brokerages.Tradier
                 Log.Trace("Reading tradier tokens from " + TokensFile);
                 return JsonConvert.DeserializeObject<TokenResponse>(File.ReadAllText(TokensFile));
             }
-            
+
             return new TokenResponse
             {
                 AccessToken = Config.Get("tradier-access-token"),

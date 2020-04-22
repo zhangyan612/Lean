@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,53 +18,48 @@ using System;
 using QuantConnect.Data.Consolidators;
 using QuantConnect.Data.Market;
 
-namespace QuantConnect.Algorithm.Examples
+namespace QuantConnect.Algorithm.CSharp
 {
     /// <summary>
-    /// Example algorithm giving an introduction into using IDataConsolidators.  
-    /// 
+    /// Example algorithm giving an introduction into using IDataConsolidators.
     /// This is an advanced QC concept and requires a certain level of comfort using C# and its event system.
-    /// 
+    ///
     /// What is an IDataConsolidator?
     /// IDataConsolidator is a plugin point that can be used to transform your data more easily.
     /// In this example we show one of the simplest consolidators, the TradeBarConsolidator.
     /// This type is capable of taking a timespan to indicate how long each bar should be, or an
     /// integer to indicate how many bars should be aggregated into one.
-    /// 
+    ///
     /// When a new 'consolidated' piece of data is produced by the IDataConsolidator, an event is fired
     /// with the argument of the new data.
-    /// 
-    /// If you are unfamiliar with C# events, or events in general, you may find this useful. This is
-    /// Microsoft's overview of events in C#
-    /// 
-    ///     http://msdn.microsoft.com/en-us/library/aa645739%28v=vs.71%29.aspx
-    /// 
-    /// Also, if you're unfamiliar with using lambda expressions in C#, you may find this useful. This
-    /// is Microsoft's overview of lambda expressions in C# (anonymous functions)
-    /// 
-    ///     http://msdn.microsoft.com/en-us/library/bb397687.aspx
-    /// 
     /// </summary>
+    /// <meta name="tag" content="using data" />
+    /// <meta name="tag" content="consolidating data" />
     public class DataConsolidationAlgorithm : QCAlgorithm
     {
-        TradeBar _last;
+        private bool consolidatedHour;
+        private bool consolidated45Minute;
+        private TradeBar _last;
 
         /// <summary>
         /// Initialise the data and resolution required, as well as the cash and start-end dates for your algorithm. All algorithms must initialized.
         /// </summary>
+        /// <meta name="tag" content="using data" />
+        /// <meta name="tag" content="consolidating data" />
         public override void Initialize()
         {
-            AddSecurity(SecurityType.Equity, "SPY");
+            AddEquity("SPY");
+            AddForex("EURUSD", Resolution.Hour);
 
             // we have data for these dates locally
             var start = new DateTime(2013, 10, 07, 09, 30, 0);
             SetStartDate(start);
-            SetEndDate(start.AddDays(1));
+            SetEndDate(start.AddDays(60));
 
             // define our 30 minute trade bar consolidator. we can access the 30 minute bar
             // from the DataConsolidated events
             var thirtyMinuteConsolidator = new TradeBarConsolidator(TimeSpan.FromMinutes(30));
-            
+
             // attach our event handler. the event handler is a function that will be called each time we produce
             // a new consolidated piece of data.
             thirtyMinuteConsolidator.DataConsolidated += ThirtyMinuteBarHandler;
@@ -94,6 +89,35 @@ namespace QuantConnect.Algorithm.Examples
 
             // this call adds our 3 day to the manager to receive updates from the engine
             SubscriptionManager.AddConsolidator("SPY", three_oneDayBar);
+
+            // API convenience method for easily receiving consolidated data
+            Consolidate("SPY", TimeSpan.FromMinutes(45), FortyFiveMinuteBarHandler);
+            Consolidate("SPY", Resolution.Hour, HourBarHandler);
+            Consolidate("EURUSD", Resolution.Daily, DailyEurUsdBarHandler);
+
+            // API convenience method for easily receiving weekly-consolidated data
+            Consolidate("SPY", Calendar.Weekly, CalendarTradeBarHandler);
+            Consolidate("EURUSD", Calendar.Weekly, CalendarQuoteBarHandler);
+
+            // API convenience method for easily receiving monthly-consolidated data
+            Consolidate("SPY", Calendar.Monthly, CalendarTradeBarHandler);
+            Consolidate("EURUSD", Calendar.Monthly, CalendarQuoteBarHandler);
+
+            // API convenience method for easily receiving quarterly-consolidated data
+            Consolidate("SPY", Calendar.Quarterly, CalendarTradeBarHandler);
+            Consolidate("EURUSD", Calendar.Quarterly, CalendarQuoteBarHandler);
+
+            // API convenience method for easily receiving yearly-consolidated data
+            Consolidate("SPY", Calendar.Yearly, CalendarTradeBarHandler);
+            Consolidate("EURUSD", Calendar.Yearly, CalendarQuoteBarHandler);
+
+            // requires quote data subscription
+            //Consolidate<QuoteBar>("EURUSD", TimeSpan.FromMinutes(45), FortyFiveMinuteBarHandler);
+            //Consolidate<QuoteBar>("EURUSD", Resolution.Hour, HourBarHandler);
+
+            // some securities may have trade and quote data available
+            //Consolidate<TradeBar>("BTCUSD", Resolution.Hour, HourBarHandler);
+            //Consolidate<QuoteBar>("BTCUSD", Resolution.Hour, HourBarHandler);
         }
 
         /// <summary>
@@ -125,12 +149,12 @@ namespace QuantConnect.Algorithm.Examples
         {
             if (_last != null && consolidated.Close > _last.Close)
             {
-                Log(consolidated.Time.ToString("o") + " >> SPY >> LONG  >> 100 >> " + Portfolio["SPY"].Quantity);
+                Log($"{consolidated.Time:o} >> SPY >> LONG  >> 100 >> {Portfolio["SPY"].Quantity}");
                 Order("SPY", 100);
             }
             else if (_last != null && consolidated.Close < _last.Close)
             {
-                Log(consolidated.Time.ToString("o") + " >> SPY >> SHORT >> 100 >> " + Portfolio["SPY"].Quantity);
+                Log($"{consolidated.Time:o} >> SPY >> SHORT >> 100 >> {Portfolio["SPY"].Quantity}");
                 Order("SPY", -100);
             }
             _last = consolidated;
@@ -143,8 +167,54 @@ namespace QuantConnect.Algorithm.Examples
         /// </summary>
         private void ThreeDayBarConsolidatedHandler(object sender, TradeBar consolidated)
         {
-            Log(consolidated.Time.ToString("0") + " >> Plotting!");
+            Log($"{consolidated.Time:o} >> Plotting!");
             Plot(consolidated.Symbol, "3HourBar", consolidated.Close);
+        }
+
+        /// <summary>
+        /// This is our event handler for our one hour consolidated defined using the Consolidate method
+        /// </summary>
+        private void HourBarHandler(TradeBar consolidated)
+        {
+            consolidatedHour = true;
+            Log($"{consolidated.EndTime:o} Hour consolidated.");
+        }
+
+        /// <summary>
+        /// This is our event handler for our 45 minute consolidated defined using the Consolidate method
+        /// </summary>
+        private void FortyFiveMinuteBarHandler(TradeBar consolidated)
+        {
+            consolidated45Minute = true;
+            Log($"{consolidated.EndTime:o} 45 minute consolidated.");
+        }
+
+        private void DailyEurUsdBarHandler(QuoteBar consolidated)
+        {
+            Log($"{consolidated.EndTime:o} EURUSD Daily consolidated.");
+        }
+
+        private void CalendarTradeBarHandler(TradeBar tradeBar)
+        {
+            Log($"{Time} :: {tradeBar.Time:o} {tradeBar.Close}");
+        }
+
+        private void CalendarQuoteBarHandler(QuoteBar quoteBar)
+        {
+            Log($"{Time} :: {quoteBar.Time:o} {quoteBar.Close}");
+        }
+
+        public override void OnEndOfAlgorithm()
+        {
+            if (!consolidatedHour)
+            {
+                throw new Exception("Expected hourly consolidator to be fired.");
+            }
+
+            if (!consolidated45Minute)
+            {
+                throw new Exception("Expected 45-minute consolidator to be fired.");
+            }
         }
     }
 }

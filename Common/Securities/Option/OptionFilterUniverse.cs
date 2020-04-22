@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -26,7 +26,7 @@ namespace QuantConnect.Securities
 {
     /// <summary>
     /// Represents options symbols universe used in filtering.
-    /// </summary> 
+    /// </summary>
     public class OptionFilterUniverse : IDerivativeSecurityFilterUniverse
     {
         /// <summary>
@@ -78,8 +78,8 @@ namespace QuantConnect.Securities
         internal Type _type = Type.Standard;
 
         // Fields used in relative strikes filter
-        private decimal _strikeSize;
-        private DateTime _strikeSizeResolveDate;
+        private List<decimal> _uniqueStrikes;
+        private DateTime _uniqueStrikesResolveDate;
 
         /// <summary>
         /// Constructs OptionFilterUniverse
@@ -95,7 +95,6 @@ namespace QuantConnect.Securities
         /// <summary>
         /// Includes universe of weeklys options (if any) into selection
         /// </summary>
-        /// <param name="universe"></param>
         /// <returns></returns>
         public OptionFilterUniverse IncludeWeeklys()
         {
@@ -106,14 +105,12 @@ namespace QuantConnect.Securities
         /// <summary>
         /// Sets universe of weeklys options (if any) as a selection
         /// </summary>
-        /// <param name="universe"></param>
         /// <returns></returns>
         public OptionFilterUniverse WeeklysOnly()
         {
             _type = Type.Weeklys;
             return this;
         }
-
 
         /// <summary>
         /// Returns universe, filtered by option type
@@ -158,11 +155,10 @@ namespace QuantConnect.Securities
         /// <summary>
         /// Returns front month contract
         /// </summary>
-        /// <param name="universe"></param>
         /// <returns></returns>
         public OptionFilterUniverse FrontMonth()
         {
-            if (_allSymbols.Count() == 0) return this;
+            if (!_allSymbols.Any()) return this;
             var ordered = this.OrderBy(x => x.ID.Date).ToList();
             var frontMonth = ordered.TakeWhile(x => ordered[0].ID.Date == x.ID.Date);
 
@@ -170,15 +166,13 @@ namespace QuantConnect.Securities
             return this;
         }
 
-
         /// <summary>
         /// Returns a list of back month contracts
         /// </summary>
-        /// <param name="universe"></param>
         /// <returns></returns>
         public OptionFilterUniverse BackMonths()
         {
-            if (_allSymbols.Count() == 0) return this;
+            if (!_allSymbols.Any()) return this;
             var ordered = this.OrderBy(x => x.ID.Date).ToList();
             var backMonths = ordered.SkipWhile(x => ordered[0].ID.Date == x.ID.Date);
 
@@ -189,7 +183,6 @@ namespace QuantConnect.Securities
         /// <summary>
         /// Returns first of back month contracts
         /// </summary>
-        /// <param name="universe"></param>
         /// <returns></returns>
         public OptionFilterUniverse BackMonth()
         {
@@ -209,38 +202,103 @@ namespace QuantConnect.Securities
                 return this;
             }
 
-            if (_underlying.Time.Date != _strikeSizeResolveDate)
+            if (_underlying.Time.Date != _uniqueStrikesResolveDate)
             {
-                // each day we need to recompute the strike size
-                var uniqueStrikes = _allSymbols.DistinctBy(x => x.ID.StrikePrice).OrderBy(x => x.ID.StrikePrice).ToList();
-                _strikeSize = uniqueStrikes.Zip(uniqueStrikes.Skip(1), (l, r) => r.ID.StrikePrice - l.ID.StrikePrice).DefaultIfEmpty(5m).Min();
-                _strikeSizeResolveDate = _underlying.Time.Date;
+                // each day we need to recompute the unique strikes list
+                _uniqueStrikes = _allSymbols
+                    .DistinctBy(x => x.ID.StrikePrice)
+                    .OrderBy(x => x.ID.StrikePrice)
+                    .ToList(symbol => symbol.ID.StrikePrice);
+
+                _uniqueStrikesResolveDate = _underlying.Time.Date;
             }
-
-            // compute the bounds, no need to worry about rounding and such
-            var minPrice = _underlying.Price + minStrike * _strikeSize;
-            var maxPrice = _underlying.Price + maxStrike * _strikeSize;
-
-            var filtered =
-                   from symbol in _allSymbols
-                   let contract = symbol.ID
-                   where contract.StrikePrice >= minPrice
-                      && contract.StrikePrice <= maxPrice
-                   select symbol;
 
             // new universe is dynamic
             _isDynamic = true;
-            _allSymbols = filtered.ToList();
+
+            // find the current price in the list of strikes
+            var exactPriceFound = true;
+            var index = _uniqueStrikes.BinarySearch(_underlying.Price);
+
+            // Return value of BinarySearch (from MSDN):
+            // The zero-based index of item in the sorted List<T>, if item is found;
+            // otherwise, a negative number that is the bitwise complement of the index of the next element that is larger than item
+            // or, if there is no larger element, the bitwise complement of Count.
+            if (index < 0)
+            {
+                // exact price not found
+                exactPriceFound = false;
+
+                if (index == ~_uniqueStrikes.Count)
+                {
+                    // there is no greater price, return empty
+                    _allSymbols = Enumerable.Empty<Symbol>();
+                    return this;
+                }
+
+                index = ~index;
+            }
+
+            // compute the bounds, no need to worry about rounding and such
+            var indexMinPrice = index + minStrike;
+            var indexMaxPrice = index + maxStrike;
+            if (!exactPriceFound)
+            {
+                if (minStrike < 0 && maxStrike > 0)
+                {
+                    indexMaxPrice--;
+                }
+                else if (minStrike > 0)
+                {
+                    indexMinPrice--;
+                    indexMaxPrice--;
+                }
+            }
+
+            if (indexMinPrice < 0)
+            {
+                indexMinPrice = 0;
+            }
+            else if (indexMinPrice >= _uniqueStrikes.Count)
+            {
+                // price out of range: return empty
+                _allSymbols = Enumerable.Empty<Symbol>();
+                return this;
+            }
+
+            if (indexMaxPrice < 0)
+            {
+                // price out of range: return empty
+                _allSymbols = Enumerable.Empty<Symbol>();
+                return this;
+            }
+            if (indexMaxPrice >= _uniqueStrikes.Count)
+            {
+                indexMaxPrice = _uniqueStrikes.Count - 1;
+            }
+
+            var minPrice = _uniqueStrikes[indexMinPrice];
+            var maxPrice = _uniqueStrikes[indexMaxPrice];
+
+            _allSymbols = _allSymbols
+                .Where(symbol =>
+                    {
+                        var price = symbol.ID.StrikePrice;
+                        return price >= minPrice && price <= maxPrice;
+                    }
+                )
+                .ToList();
+
             return this;
         }
 
         /// <summary>
-        /// Applies filter selecting options contracts based on a range of expiration dates relative to the current day 
+        /// Applies filter selecting options contracts based on a range of expiration dates relative to the current day
         /// </summary>
         /// <param name="minExpiry">The minimum time until expiry to include, for example, TimeSpan.FromDays(10)
-        /// would exclude contracts expiring in less than 10 days</param>
-        /// <param name="maxExpiry">The maxmium time until expiry to include, for example, TimeSpan.FromDays(10)
         /// would exclude contracts expiring in more than 10 days</param>
+        /// <param name="maxExpiry">The maxmium time until expiry to include, for example, TimeSpan.FromDays(10)
+        /// would exclude contracts expiring in less than 10 days</param>
         /// <returns></returns>
         public OptionFilterUniverse Expiration(TimeSpan minExpiry, TimeSpan maxExpiry)
         {
@@ -254,15 +312,71 @@ namespace QuantConnect.Securities
             var minExpiryToDate = _underlying.Time.Date + minExpiry;
             var maxExpiryToDate = _underlying.Time.Date + maxExpiry;
 
-            // ReSharper disable once PossibleMultipleEnumeration - ReSharper is wrong here due to the ToList call
-            var filtered =
-                   from symbol in _allSymbols
-                   let contract = symbol.ID
-                   where contract.Date >= minExpiryToDate
-                      && contract.Date <= maxExpiryToDate
-                   select symbol;
+            _allSymbols = _allSymbols
+                .Where(symbol => symbol.ID.Date >= minExpiryToDate && symbol.ID.Date <= maxExpiryToDate)
+                .ToList();
 
-            _allSymbols = filtered.ToList();
+            return this;
+        }
+
+        /// <summary>
+        /// Applies filter selecting options contracts based on a range of expiration dates relative to the current day
+        /// </summary>
+        /// <param name="minExpiryDays">The minimum time, expressed in days, until expiry to include, for example, 10
+        /// would exclude contracts expiring in more than 10 days</param>
+        /// <param name="maxExpiryDays">The maximum time, expressed in days, until expiry to include, for example, 10
+        /// would exclude contracts expiring in less than 10 days</param>
+        /// <returns></returns>
+        public OptionFilterUniverse Expiration(int minExpiryDays, int maxExpiryDays)
+        {
+            return Expiration(TimeSpan.FromDays(minExpiryDays), TimeSpan.FromDays(maxExpiryDays));
+        }
+
+        /// <summary>
+        /// Explicitly sets the selected contract symbols for this universe.
+        /// This overrides and and all other methods of selecting symbols assuming it is called last.
+        /// </summary>
+        /// <param name="contracts">The option contract symbol objects to select</param>
+        public OptionFilterUniverse Contracts(IEnumerable<Symbol> contracts)
+        {
+            _allSymbols = contracts.ToList();
+            return this;
+        }
+
+        /// <summary>
+        /// Sets a function used to filter the set of available contract filters. The input to the 'contractSelector'
+        /// function will be the already filtered list if any other filters have already been applied.
+        /// </summary>
+        /// <param name="contractSelector">The option contract symbol objects to select</param>
+        public OptionFilterUniverse Contracts(Func<IEnumerable<Symbol>, IEnumerable<Symbol>> contractSelector)
+        {
+            // force materialization using ToList
+            _allSymbols = contractSelector(_allSymbols).ToList();
+            return this;
+        }
+
+        /// <summary>
+        /// Sets universe of call options (if any) as a selection
+        /// </summary>
+        public OptionFilterUniverse CallsOnly()
+        {
+            return Contracts(contracts => contracts.Where(x => x.ID.OptionRight == OptionRight.Call));
+        }
+
+        /// <summary>
+        /// Sets universe of put options (if any) as a selection
+        /// </summary>
+        public OptionFilterUniverse PutsOnly()
+        {
+            return Contracts(contracts => contracts.Where(x => x.ID.OptionRight == OptionRight.Put));
+        }
+
+        /// <summary>
+        /// Instructs the engine to only filter options contracts on the first time step of each market day.
+        /// </summary>
+        public OptionFilterUniverse OnlyApplyFilterAtMarketOpen()
+        {
+            _isDynamic = false;
             return this;
         }
 
@@ -289,7 +403,7 @@ namespace QuantConnect.Securities
     public static class OptionFilterUniverseEx
     {
         /// <summary>
-        /// Filters universe 
+        /// Filters universe
         /// </summary>
         /// <param name="universe"></param>
         /// <param name="predicate"></param>
@@ -302,7 +416,7 @@ namespace QuantConnect.Securities
         }
 
         /// <summary>
-        /// Maps universe 
+        /// Maps universe
         /// </summary>
         public static OptionFilterUniverse Select(this OptionFilterUniverse universe, Func<Symbol, Symbol> mapFunc)
         {
@@ -312,7 +426,7 @@ namespace QuantConnect.Securities
         }
 
         /// <summary>
-        /// Binds universe 
+        /// Binds universe
         /// </summary>
         public static OptionFilterUniverse SelectMany(this OptionFilterUniverse universe, Func<Symbol, IEnumerable<Symbol>> mapFunc)
         {

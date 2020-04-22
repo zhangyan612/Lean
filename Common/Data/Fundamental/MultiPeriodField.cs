@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -13,6 +13,7 @@
  * limitations under the License.
 */
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
@@ -25,16 +26,56 @@ namespace QuantConnect.Data.Fundamental
     public abstract class MultiPeriodField
     {
         /// <summary>
+        /// Helper, and internal struct use to hold the values for a period.
+        /// </summary>
+        /// <remarks>For performance using a struct versus a class, this allows us to save
+        /// on references</remarks>
+        protected struct PeriodField
+        {
+            /// <summary>
+            /// Creates a new period field instance
+            /// </summary>
+            public PeriodField(byte period, decimal value)
+            {
+                Period = period;
+                Value = value;
+            }
+
+            /// <summary>
+            /// The period associated with this value <see cref="PeriodAsByte"/>
+            /// </summary>
+            public byte Period { get; set; }
+
+            /// <summary>
+            /// The value for this period
+            /// </summary>
+            public decimal Value { get; set; }
+        }
+
+        private bool StoreIsEmpty => Store == null || Store.Length == 0;
+
+        /// <summary>
         /// The dictionary store containing all values for the multi-period field
         /// </summary>
-        protected IDictionary<string, decimal> Store;
+        /// <remarks>For performance using and array versus any other collection
+        /// this allows us to save in memory footprint and speed. We expect few amount of
+        /// elements in each collection but multiple collections <see cref="FineFundamental"/></remarks>
+        protected PeriodField[] Store;
 
         /// <summary>
         /// Gets the default period for the field
         /// </summary>
-        protected virtual string DefaultPeriod
+        protected virtual byte DefaultPeriod => StoreIsEmpty ? PeriodAsByte.NoPeriod : Store.FirstOrDefault().Period;
+
+        /// <summary>
+        /// Creates a new instance
+        /// </summary>
+        protected MultiPeriodField(IDictionary<string, decimal> store = null)
         {
-            get { return Store.Keys.FirstOrDefault() ?? string.Empty; }
+            if (store != null)
+            {
+                Store = store.Select(kvp => new PeriodField(PeriodAsByte.Convert(kvp.Key), kvp.Value)).ToArray();
+            }
         }
 
         /// <summary>
@@ -42,10 +83,49 @@ namespace QuantConnect.Data.Fundamental
         /// </summary>
         /// <param name="period">The requested period</param>
         /// <returns>The value for the period</returns>
-        protected decimal GetPeriodValue(string period)
+        public decimal GetPeriodValue(string period)
         {
-            decimal value;
-            return Store.TryGetValue(period, out value) ? value : 0m;
+            return GetPeriodValue(PeriodAsByte.Convert(period));
+        }
+
+        /// <summary>
+        /// Internal implementation which gets the value of the field for the requested period
+        /// </summary>
+        protected decimal GetPeriodValue(byte period)
+        {
+            return StoreIsEmpty ? 0 : Store.FirstOrDefault(field => field.Period == period).Value;
+        }
+
+        /// <summary>
+        /// Returns true if the field contains a value for the requested period
+        /// </summary>
+        /// <param name="period">The requested period</param>
+        public bool HasPeriodValue(string period) => !StoreIsEmpty && Store.Any(field => field.Period == PeriodAsByte.Convert(period));
+
+        /// <summary>
+        /// Returns true if the field contains a value for the default period
+        /// </summary>
+        public bool HasValue => HasPeriodValue(PeriodAsByte.Convert(DefaultPeriod));
+
+        /// <summary>
+        /// Gets the list of available period names for the field
+        /// </summary>
+        /// <returns>The list of periods</returns>
+        public IEnumerable<string> GetPeriodNames()
+        {
+            return StoreIsEmpty
+                ? Enumerable.Empty<string>() : Store.Select(field => PeriodAsByte.Convert(field.Period));
+        }
+
+        /// <summary>
+        /// Gets a dictionary of period names and values for the field
+        /// </summary>
+        /// <returns>The dictionary of period names and values</returns>
+        public IReadOnlyDictionary<string, decimal> GetPeriodValues()
+        {
+            return StoreIsEmpty
+                ? new Dictionary<string, decimal>()
+                : Store.ToDictionary(field => PeriodAsByte.Convert(field.Period), field => field.Value);
         }
 
         /// <summary>
@@ -56,10 +136,12 @@ namespace QuantConnect.Data.Fundamental
         {
             get
             {
-                if (Store.Count == 0) return 0;
+                if (StoreIsEmpty)
+                {
+                    return 0;
+                }
 
-                decimal value;
-                return Store.TryGetValue(DefaultPeriod, out value) ? value : Store.First().Value;
+                return HasValue ? GetPeriodValue(DefaultPeriod) : Store.First().Value;
             }
         }
 
@@ -79,7 +161,40 @@ namespace QuantConnect.Data.Fundamental
         /// <param name="value">The value to be set</param>
         public void SetPeriodValue(string period, decimal value)
         {
-            Store[period] = value;
+            SetPeriodValue(PeriodAsByte.Convert(period), value);
+        }
+
+        /// <summary>
+        /// Internal implementation which sets the value of the field for the specified period
+        /// </summary>
+        protected void SetPeriodValue(byte period, decimal value)
+        {
+            if (!StoreIsEmpty)
+            {
+                for (var i = 0; i < Store.Length; i++)
+                {
+                    if (Store[i].Period == period)
+                    {
+                        Store[i].Value = value;
+                        return;
+                    }
+                }
+            }
+
+            // if we are here it means the array does not have the value
+            // we have to create a new array and add the value
+            var index = 0;
+            if (Store == null)
+            {
+                Store = new PeriodField[1];
+            }
+            else
+            {
+                var newSize = Store.Length + 1;
+                Array.Resize(ref Store, newSize);
+                index = newSize - 1;
+            }
+            Store[index] = new PeriodField(period, value);
         }
 
         /// <summary>
@@ -87,22 +202,22 @@ namespace QuantConnect.Data.Fundamental
         /// </summary>
         public bool HasValues()
         {
-            return Store.Count > 0;
+            return !StoreIsEmpty;
         }
 
         /// <summary>
-        /// Sets period values for non existing periods from a previous instance
+        /// Applies updated values from <paramref name="update"/> to this instance
         /// </summary>
-        /// <remarks>Used to fill-forward values from previous dates</remarks>
-		/// <param name="previous">The previous instance</param>
-        public void UpdateValues(MultiPeriodField previous)
+        /// <remarks>Used to apply data updates to the current instance. This WILL overwrite existing values.</remarks>
+        /// <param name="update">The next data update for this instance</param>
+        public void UpdateValues(MultiPeriodField update)
         {
-            if (previous == null)
+            if (update?.Store == null)
                 return;
 
-            foreach (var kvp in previous.Store.Where(kvp => !Store.ContainsKey(kvp.Key)))
+            foreach (var kvp in update.Store)
             {
-                SetPeriodValue(kvp.Key, kvp.Value);
+                SetPeriodValue(kvp.Period, kvp.Value);
             }
         }
 
@@ -115,7 +230,8 @@ namespace QuantConnect.Data.Fundamental
         /// <filterpriority>2</filterpriority>
         public override string ToString()
         {
-            return string.Join(";", Store.Select(x => x.Key + ":" + x.Value));
+            return StoreIsEmpty
+                ? "" : string.Join(";", Store.Select(x => $"{PeriodAsByte.Convert(x.Period)}:{x.Value}"));
         }
     }
 }

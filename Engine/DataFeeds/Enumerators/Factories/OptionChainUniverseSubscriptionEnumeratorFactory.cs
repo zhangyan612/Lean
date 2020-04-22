@@ -1,11 +1,11 @@
 /*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -21,7 +21,6 @@ using QuantConnect.Data;
 using QuantConnect.Data.Market;
 using QuantConnect.Data.UniverseSelection;
 using QuantConnect.Interfaces;
-using System.Threading;
 using QuantConnect.Data.Auxiliary;
 
 namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators.Factories
@@ -60,8 +59,10 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators.Factories
         /// <summary>
         /// Initializes a new instance of the <see cref="OptionChainUniverseSubscriptionEnumeratorFactory"/> class
         /// </summary>
+        /// <param name="enumeratorConfigurator">Function used to configure the sub-enumerators before sync (fill-forward/filter/ect...)</param>
         /// <param name="symbolUniverse">Symbol universe provider of the data queue</param>
-        public OptionChainUniverseSubscriptionEnumeratorFactory(Func<SubscriptionRequest, IEnumerator<BaseData>, IEnumerator<BaseData>> enumeratorConfigurator, 
+        /// <param name="timeProvider">The time provider instance used to determine when bars are completed and can be emitted</param>
+        public OptionChainUniverseSubscriptionEnumeratorFactory(Func<SubscriptionRequest, IEnumerator<BaseData>, IEnumerator<BaseData>> enumeratorConfigurator,
                                                                 IDataQueueUniverseProvider symbolUniverse, ITimeProvider timeProvider)
         {
             _isLiveMode = true;
@@ -80,25 +81,19 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators.Factories
         {
             if (_isLiveMode)
             {
-                var localTime = request.StartTimeUtc.ConvertFromUtc(request.Configuration.ExchangeTimeZone);
-                
-                // loading the list of option contract and converting them into zip entries
-                var symbols = _symbolUniverse.LookupSymbols(request.Security.Symbol.Underlying.ToString(), request.Security.Type);
-                var zipEntries = symbols.Select(x => new ZipEntryName { Time = localTime, Symbol = x } as BaseData).ToList();
-
                 // creating trade bar builder enumerator to model underlying price change
-                var underlyingEnumerator = new TradeBarBuilderEnumerator(request.Configuration.Increment, request.Security.Exchange.TimeZone, _timeProvider);
+                var underlyingEnumerator = new TradeBarBuilderEnumerator(request.Configuration.Increment, request.Security.Exchange.TimeZone, _timeProvider, _isLiveMode);
 
                 // configuring the enumerator
                 var subscriptionConfiguration = GetSubscriptionConfigurations(request).First();
                 var subscriptionRequest = new SubscriptionRequest(request, configuration: subscriptionConfiguration);
                 var configuredEnumerator = _enumeratorConfigurator(subscriptionRequest, underlyingEnumerator);
 
-                return new DataQueueOptionChainUniverseDataCollectionEnumerator(request.Security.Symbol, configuredEnumerator, zipEntries);
+                return new DataQueueOptionChainUniverseDataCollectionEnumerator(subscriptionRequest, configuredEnumerator, _symbolUniverse, _timeProvider);
             }
             else
             {
-                var factory = new BaseDataSubscriptionEnumeratorFactory(_mapFileResolver, _factorFileProvider);
+                var factory = new BaseDataSubscriptionEnumeratorFactory(_isLiveMode, _mapFileResolver, _factorFileProvider);
 
                 var enumerators = GetSubscriptionConfigurations(request)
                     .Select(c => new SubscriptionRequest(request, configuration: c))
@@ -115,7 +110,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators.Factories
             var config = request.Configuration;
             var underlying = config.Symbol.Underlying;
 
-            // Making sure data is non-tick 
+            // Making sure data is non-tick
             var resolution = config.Resolution == Resolution.Tick ? Resolution.Second : config.Resolution;
 
             var configurations = new List<SubscriptionDataConfig>

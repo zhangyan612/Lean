@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -14,6 +14,7 @@
 */
 
 using System;
+using static QuantConnect.StringExtensions;
 
 namespace QuantConnect.Securities
 {
@@ -65,12 +66,12 @@ namespace QuantConnect.Securities
             var parts = key.Split('-');
             if (parts.Length != 3)
             {
-                throw new FormatException("The specified key was not in the expected format: " + key);
+                throw new FormatException($"The specified key was not in the expected format: {key}");
             }
             SecurityType type;
             if (!Enum.TryParse(parts[0], out type))
             {
-                throw new ArgumentException("Unable to parse '" + parts[2] + "' as a SecurityType.");
+                throw new ArgumentException($"Unable to parse \'{parts[2]}\' as a SecurityType.");
             }
 
             return new SecurityDatabaseKey(parts[1], parts[2], type);
@@ -89,7 +90,9 @@ namespace QuantConnect.Securities
         {
             if (ReferenceEquals(null, other)) return false;
             if (ReferenceEquals(this, other)) return true;
-            return string.Equals(Market, other.Market) && Equals(Symbol, other.Symbol) && SecurityType == other.SecurityType;
+            return Market.Equals(other.Market, StringComparison.OrdinalIgnoreCase)
+                   && Symbol.Equals(other.Symbol, StringComparison.OrdinalIgnoreCase)
+                   && SecurityType == other.SecurityType;
         }
 
         /// <summary>
@@ -108,7 +111,7 @@ namespace QuantConnect.Securities
         }
 
         /// <summary>
-        /// Serves as the default hash function. 
+        /// Serves as the default hash function.
         /// </summary>
         /// <returns>
         /// A hash code for the current object.
@@ -117,8 +120,8 @@ namespace QuantConnect.Securities
         {
             unchecked
             {
-                var hashCode = (Market != null ? Market.GetHashCode() : 0);
-                hashCode = (hashCode*397) ^ (Symbol != null ? Symbol.GetHashCode() : 0);
+                var hashCode = StringComparer.OrdinalIgnoreCase.GetHashCode(Market);
+                hashCode = (hashCode*397) ^ StringComparer.OrdinalIgnoreCase.GetHashCode(Symbol);
                 hashCode = (hashCode*397) ^ (int) SecurityType;
                 return hashCode;
             }
@@ -144,7 +147,7 @@ namespace QuantConnect.Securities
         /// </returns>
         public override string ToString()
         {
-            return string.Format("{0}-{1}-{2}", SecurityType, Market ?? Wildcard, Symbol ?? Wildcard);
+            return Invariant($"{SecurityType}-{Market}-{Symbol}");
         }
     }
 }

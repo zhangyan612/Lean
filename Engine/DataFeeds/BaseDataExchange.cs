@@ -1,11 +1,11 @@
 /*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -60,7 +60,6 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         /// Initializes a new instance of the <see cref="BaseDataExchange"/>
         /// </summary>
         /// <param name="name">A name for this exchange</param>
-        /// <param name="enumerators">The enumerators to fanout</param>
         public BaseDataExchange(string name)
         {
             _name = name;
@@ -137,7 +136,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         }
 
         /// <summary>
-        /// Adds the specified hander function to handle data for the handler's symbol 
+        /// Adds the specified hander function to handle data for the handler's symbol
         /// </summary>
         /// <param name="symbol">The symbol whose data is to be handled</param>
         /// <param name="handler">The handler to use when this symbol's data is encountered</param>
@@ -151,7 +150,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                     dataHandler.DataEmitted += (sender, args) => handler(args);
                     return dataHandler;
                 },
-                (x, existingHandler) => 
+                (x, existingHandler) =>
                 {
                     existingHandler.DataEmitted += (sender, args) => handler(args);
                     return existingHandler;
@@ -226,6 +225,10 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                     var handled = false;
                     foreach (var kvp in _enumerators)
                     {
+                        if (_isStopping)
+                        {
+                            break;
+                        }
                         var enumeratorHandler = kvp.Value;
                         var enumerator = enumeratorHandler.Enumerator;
 

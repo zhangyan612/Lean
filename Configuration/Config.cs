@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,12 +15,13 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using QuantConnect.Logging;
+using static System.FormattableString;
 
 namespace QuantConnect.Configuration
 {
@@ -30,9 +31,58 @@ namespace QuantConnect.Configuration
     public static class Config
     {
         //Location of the configuration file.
-        private const string ConfigurationFileName = "config.json";
+        private static string ConfigurationFileName = "config.json";
 
-        private static readonly Lazy<JObject> Settings = new Lazy<JObject>(() =>
+        /// <summary>
+        /// Set configuration file on-fly
+        /// </summary>
+        /// <param name="fileName"></param>
+        public static void SetConfigurationFile(string fileName)
+        {
+            if (File.Exists(fileName))
+            {
+                Log.Trace(Invariant($"Using {fileName} as configuration file"));
+                ConfigurationFileName = fileName;
+            }
+            else
+            {
+                Log.Error(Invariant($"Configuration file {fileName} does not exist, using {ConfigurationFileName}"));
+            }
+        }
+
+        /// <summary>
+        /// Merge CLI arguments with configuration file + load custom config file via CLI arg
+        /// </summary>
+        /// <param name="cliArguments"></param>
+        public static void MergeCommandLineArgumentsWithConfiguration(Dictionary<string, object> cliArguments)
+        {
+            if (cliArguments.ContainsKey("config"))
+            {
+                SetConfigurationFile(cliArguments["config"] as string);
+                Reset();
+            }
+
+            var jsonArguments = JsonConvert.DeserializeObject(JsonConvert.SerializeObject(cliArguments));
+
+            Settings.Value.Merge(jsonArguments, new JsonMergeSettings
+            {
+                MergeArrayHandling = MergeArrayHandling.Union
+            });
+        }
+
+        /// <summary>
+        /// Resets the config settings to their default values.
+        /// Called in regression tests where multiple algorithms are run sequentially,
+        /// and we need to guarantee that every test starts with the same configuration.
+        /// </summary>
+        public static void Reset()
+        {
+            Settings = new Lazy<JObject>(ConfigFactory);
+        }
+
+        private static Lazy<JObject> Settings = new Lazy<JObject>(ConfigFactory);
+
+        private static JObject ConfigFactory()
         {
             // initialize settings inside a lazy for free thread-safe, one-time initialization
             if (!File.Exists(ConfigurationFileName))
@@ -43,7 +93,7 @@ namespace QuantConnect.Configuration
                     {"live-mode", false},
                     {"data-folder", "../../../Data/"},
                     {"messaging-handler", "QuantConnect.Messaging.Messaging"},
-                    {"queue-handler", "QuantConnect.Queues.Queues"},
+                    {"job-queue-handler", "QuantConnect.Queues.JobQueue"},
                     {"api-handler", "QuantConnect.Api.Api"},
                     {"setup-handler", "QuantConnect.Lean.Engine.Setup.ConsoleSetupHandler"},
                     {"result-handler", "QuantConnect.Lean.Engine.Results.BacktestingResultHandler"},
@@ -54,7 +104,7 @@ namespace QuantConnect.Configuration
             }
 
             return JObject.Parse(File.ReadAllText(ConfigurationFileName));
-        });
+        }
 
         /// <summary>
         /// Gets the currently selected environment. If sub-environments are defined,
@@ -81,7 +131,7 @@ namespace QuantConnect.Configuration
             }
             return string.Join(".", environments);
         }
-        
+
         /// <summary>
         /// Get the matching config setting from the file searching for this key.
         /// </summary>
@@ -96,7 +146,7 @@ namespace QuantConnect.Configuration
             var token = GetToken(Settings.Value, key);
             if (token == null)
             {
-                Log.Trace(string.Format("Config.Get(): Configuration key not found. Key: {0} - Using default value: {1}", key, defaultValue));
+                Log.Trace(Invariant($"Config.Get(): Configuration key not found. Key: {key} - Using default value: {defaultValue}"));
                 return defaultValue;
             }
             return token.ToString();
@@ -121,8 +171,8 @@ namespace QuantConnect.Configuration
             JToken environment = Settings.Value;
             while (key.Contains("."))
             {
-                var envName = key.Substring(0, key.IndexOf("."));
-                key = key.Substring(key.IndexOf(".") + 1);
+                var envName = key.Substring(0, key.IndexOf(".", StringComparison.InvariantCulture));
+                key = key.Substring(key.IndexOf(".", StringComparison.InvariantCulture) + 1);
                 var environments = environment["environments"];
                 if (environments == null)
                 {
@@ -182,7 +232,13 @@ namespace QuantConnect.Configuration
             var token = GetToken(Settings.Value, key);
             if (token == null)
             {
-                Log.Trace(string.Format("Config.GetValue(): {0} - Using default value: {1}", key, defaultValue));
+                var defaultValueString = defaultValue is IConvertible
+                    ? ((IConvertible) defaultValue).ToString(CultureInfo.InvariantCulture)
+                    : defaultValue is IFormattable
+                        ? ((IFormattable) defaultValue).ToString(null, CultureInfo.InvariantCulture)
+                        : Invariant($"{defaultValue}");
+
+                Log.Trace(Invariant($"Config.GetValue(): {key} - Using default value: {defaultValueString}"));
                 return defaultValue;
             }
 
@@ -192,7 +248,7 @@ namespace QuantConnect.Configuration
             {
                 value = token.Value<string>();
             }
-            catch (Exception err)
+            catch (Exception)
             {
                 value = token.ToString();
             }
@@ -204,7 +260,7 @@ namespace QuantConnect.Configuration
 
             if (typeof(IConvertible).IsAssignableFrom(type))
             {
-                return (T) Convert.ChangeType(value, type);
+                return (T) Convert.ChangeType(value, type, CultureInfo.InvariantCulture);
             }
 
             // try and find a static parse method
@@ -219,7 +275,7 @@ namespace QuantConnect.Configuration
             }
             catch (Exception err)
             {
-                Log.Trace("Config.GetValue<{0}>({1},{2}): Failed to parse: {3}. Using default value.", typeof (T).Name, key, defaultValue, value);
+                Log.Trace(Invariant($"Config.GetValue<{typeof(T).Name}>({key},{defaultValue}): Failed to parse: {value}. Using default value."));
                 Log.Error(err);
                 return defaultValue;
             }
@@ -230,7 +286,7 @@ namespace QuantConnect.Configuration
             }
             catch (Exception err)
             {
-                Log.Trace("Config.GetValue<{0}>({1},{2}): Failed to JSON deserialize: {3}. Using default value.", typeof(T).Name, key, defaultValue, value);
+                Log.Trace(Invariant($"Config.GetValue<{typeof(T).Name}>({key},{defaultValue}): Failed to JSON deserialize: {value}. Using default value."));
                 Log.Error(err);
                 return defaultValue;
             }
@@ -279,7 +335,7 @@ namespace QuantConnect.Configuration
         {
             if (!Settings.IsValueCreated) return;
             var serialized = JsonConvert.SerializeObject(Settings.Value, Formatting.Indented);
-            File.WriteAllText("config.json", serialized);
+            File.WriteAllText(ConfigurationFileName, serialized);
         }
 
         /// <summary>
@@ -341,7 +397,7 @@ namespace QuantConnect.Configuration
 
             // remove all environments
             var environmentsProperty = clone.Property("environments");
-            if (environmentsProperty != null) environmentsProperty.Remove();
+            environmentsProperty?.Remove();
 
             return clone;
         }

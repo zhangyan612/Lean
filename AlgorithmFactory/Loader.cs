@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,13 +19,16 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using ImpromptuInterface;
-using IronPython.Hosting;
-using QuantConnect.Configuration;
+using System.Security.Policy;
+using Python.Runtime;
 using QuantConnect.Interfaces;
 using QuantConnect.Logging;
+using QuantConnect.AlgorithmFactory.Python.Wrappers;
+using QuantConnect.Configuration;
+using QuantConnect.Python;
+using QuantConnect.Util;
 
-namespace QuantConnect.AlgorithmFactory 
+namespace QuantConnect.AlgorithmFactory
 {
     /// <summary>
     /// Loader creates and manages the memory and exception space of the algorithm, ensuring if it explodes the Lean Engine is intact.
@@ -33,17 +36,20 @@ namespace QuantConnect.AlgorithmFactory
     [ClassInterface(ClassInterfaceType.AutoDual)]
     public class Loader : MarshalByRefObject
     {
+        // True if we are in a debugging session
+        private readonly bool _debugging;
+
         // Defines the maximum amount of time we will allow for instantiating an instance of IAlgorithm
         private readonly TimeSpan _loaderTimeLimit;
 
         // Language of the loader class.
         private readonly Language _language;
 
-        // Location of the IronPython standard library
-        private readonly string _ironPythonLibrary = Config.Get("ironpython-location", "../ironpython/Lib");
-
         // Defines how we resolve a list of type names into a single type name to be instantiated
         private readonly Func<List<string>, string> _multipleTypeNameResolverFunction;
+
+        // The worker thread instance the loader will use if not null
+        private readonly WorkerThread _workerThread;
 
         /// <summary>
         /// Memory space of the user algorithm
@@ -61,31 +67,39 @@ namespace QuantConnect.AlgorithmFactory
         private const string AlgorithmBaseTypeFullName = "QuantConnect.Algorithm.QCAlgorithm";
 
         /// <summary>
+        /// The full type name of QCAlgorithmFramework, this is so we don't pick him up when querying for types
+        /// </summary>
+        private const string FrameworkBaseTypeFullName = "QuantConnect.Algorithm.Framework.QCAlgorithmFramework";
+
+        /// <summary>
         /// Creates a new loader with a 10 second maximum load time that forces exactly one derived type to be found
         /// </summary>
         public Loader()
-            : this(Language.CSharp, TimeSpan.FromSeconds(10), names => names.SingleOrDefault())
+            : this(false, Language.CSharp, TimeSpan.FromSeconds(10), names => names.SingleOrDefault())
         {
         }
 
         /// <summary>
         /// Creates a new loader with the specified configuration
         /// </summary>
+        /// <param name="debugging">True if we are debugging</param>
         /// <param name="language">Which language are we trying to load</param>
         /// <param name="loaderTimeLimit">
         /// Used to limit how long it takes to create a new instance
         /// </param>
         /// <param name="multipleTypeNameResolverFunction">
         /// Used to resolve multiple type names found in assembly to a single type name, if null, defaults to names => names.SingleOrDefault()
-        /// 
+        ///
         /// When we search an assembly for derived types of IAlgorithm, sometimes the assembly will contain multiple matching types. This is the case
         /// for the QuantConnect.Algorithm assembly in this solution.  In order to pick the correct type, consumers must specify how to pick the type,
         /// that's what this function does, it picks the correct type from the list of types found within the assembly.
         /// </param>
-        public Loader(Language language, TimeSpan loaderTimeLimit, Func<List<string>, string> multipleTypeNameResolverFunction)
+        /// <param name="workerThread">The worker thread instance the loader should use</param>
+        public Loader(bool debugging, Language language, TimeSpan loaderTimeLimit, Func<List<string>, string> multipleTypeNameResolverFunction, WorkerThread workerThread = null)
         {
+            _debugging = debugging;
             _language = language;
-
+            _workerThread = workerThread;
             if (multipleTypeNameResolverFunction == null)
             {
                 throw new ArgumentNullException("multipleTypeNameResolverFunction");
@@ -102,15 +116,15 @@ namespace QuantConnect.AlgorithmFactory
         /// <param name="assemblyPath">Location of the DLL</param>
         /// <param name="algorithmInstance">Output algorithm instance</param>
         /// <param name="errorMessage">Output error message on failure</param>
-        /// <returns>Bool true on successfully loading the class.</returns>        
-        public bool TryCreateAlgorithmInstance(string assemblyPath, out IAlgorithm algorithmInstance, out string errorMessage) 
+        /// <returns>Bool true on successfully loading the class.</returns>
+        public bool TryCreateAlgorithmInstance(string assemblyPath, out IAlgorithm algorithmInstance, out string errorMessage)
         {
             //Default initialisation of Assembly.
             algorithmInstance = null;
             errorMessage = "";
 
             //First most basic check:
-            if (!File.Exists(assemblyPath)) 
+            if (!File.Exists(assemblyPath))
             {
                 return false;
             }
@@ -130,7 +144,6 @@ namespace QuantConnect.AlgorithmFactory
             return algorithmInstance != null;
         }
 
-
         /// <summary>
         /// Create a new instance of a python algorithm
         /// </summary>
@@ -140,82 +153,52 @@ namespace QuantConnect.AlgorithmFactory
         /// <returns></returns>
         private bool TryCreatePythonAlgorithm(string assemblyPath, out IAlgorithm algorithmInstance, out string errorMessage)
         {
-            var success = false;
             algorithmInstance = null;
-            errorMessage = "";
+            errorMessage = string.Empty;
+
+            //File does not exist.
+            if (!File.Exists(assemblyPath))
+            {
+                errorMessage = $"Loader.TryCreatePythonAlgorithm(): Unable to find py file: {assemblyPath}";
+                return false;
+            }
+
+            var pythonFile = new FileInfo(assemblyPath);
+            var moduleName = pythonFile.Name.Replace(".pyc", "").Replace(".py", "");
 
             try
             {
-                //Create the python engine
-                var engine = Python.CreateEngine();
-                var paths = engine.GetSearchPaths();
-                paths.Add(_ironPythonLibrary);
-                engine.SetSearchPaths(paths);
+                PythonInitializer.Initialize();
 
-                //Load the dll - built with clr.Compiler()
-                Log.Trace("Loader.TryCreatePythonAlgorithm(): Loading python assembly: " + assemblyPath);
-                var library = Assembly.LoadFile(Path.GetFullPath(assemblyPath));
-                engine.Runtime.LoadAssembly(library);
+                algorithmInstance = new AlgorithmPythonWrapper(moduleName);
 
-                //Import the python dll: requires a main.py file to serve as starting point for the algorithm.
-                var items = new List<KeyValuePair<string, dynamic>>();
-                try
+                // we need stdout for debugging
+                if (!_debugging && Config.GetBool("mute-python-library-logging", true))
                 {
-                    Log.Trace("Loader.TryCreatePythonAlgorithm(): Importing python module...");
-                    var algorithmName = Config.Get("algorithm-type-name");
-                    var scope = engine.Runtime.ImportModule(string.IsNullOrEmpty(algorithmName) ? "main" : algorithmName);
-                    items = (List<KeyValuePair<string, dynamic>>)scope.GetItems();
-                }
-                catch (Exception err)
-                {
-                    Log.Error(err);
-                    errorMessage = err.Message + " - could not locate 'main' module. Please make sure you have a main.py file in your project.";
-                    return false;
-                }
-
-                //Loop through the types in the dll, see if we can find a "QCAlgorithm" base class
-                Log.Trace("Loader.TryCreatePythonAlgorithm(): Finding QCAlgorithm...");
-                dynamic dynamicAlgorithm = null;
-                foreach (var item in items)
-                {
-                    try
+                    using (Py.GIL())
                     {
-                        string baseName = item.Value.__bases__.ToString().ToString();
-                        if (baseName.Contains("QCAlgorithm"))
-                        {
-                            dynamicAlgorithm = item.Value;
-                        }
-                    }
-                    catch (Exception)
-                    { 
-                        //Suppress the error messages
+                        PythonEngine.Exec(
+                            @"
+import logging, os, sys
+sys.stdout = open(os.devnull, 'w')
+logging.captureWarnings(True)"
+                        );
                     }
                 }
-
-                //If we haven't found it yet
-                if (dynamicAlgorithm == null)
-                {
-                    errorMessage = "Could not find QCAlgorithm class in your project";
-                    return false;
-                }
-
-                //Cast DLR object to an IAlgorithm instance with Impromptu
-                Log.Trace("Loader.TryCreatePythonAlgorithm(): Creating IAlgorithm instance...");
-                dynamic instance = engine.Operations.CreateInstance(dynamicAlgorithm);
-                algorithmInstance = Impromptu.ActLike<IAlgorithm>(instance);
-                success = true;
             }
-            catch (Exception err)
+            catch (Exception e)
             {
-                Log.Error(err);
+                Log.Error(e);
+                errorMessage = $"Loader.TryCreatePythonAlgorithm(): Unable to import python module {assemblyPath}. {e.Message}";
+                return false;
             }
 
-            return success && (algorithmInstance != null);
+            //Successful load.
+            return true;
         }
 
-
         /// <summary>
-        /// Create a generic IL algorithm 
+        /// Create a generic IL algorithm
         /// </summary>
         /// <param name="assemblyPath"></param>
         /// <param name="algorithmInstance"></param>
@@ -229,10 +212,11 @@ namespace QuantConnect.AlgorithmFactory
             try
             {
                 byte[] debugInformationBytes = null;
-                
+
                 // if the assembly is located in the base directory then don't bother loading the pdbs
                 // manually, they'll be loaded automatically by the .NET runtime.
-                if (new FileInfo(assemblyPath).DirectoryName == AppDomain.CurrentDomain.BaseDirectory)
+                var directoryName = new FileInfo(assemblyPath).DirectoryName;
+                if (directoryName != null && directoryName.TrimEnd(Path.DirectorySeparatorChar) != AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar))
                 {
                     // see if the pdb exists
                     var mdbFilename = assemblyPath + ".mdb";
@@ -261,14 +245,8 @@ namespace QuantConnect.AlgorithmFactory
                     var assemblyBytes = File.ReadAllBytes(assemblyPath);
                     assembly = Assembly.Load(assemblyBytes, debugInformationBytes);
                 }
-                if (assembly == null)
-                {
-                    errorMessage = "Assembly is null.";
-                    Log.Error("Loader.TryCreateILAlgorithm(): Assembly is null");
-                    return false;
-                }
 
-                //Get the list of extention classes in the library: 
+                //Get the list of extention classes in the library:
                 var types = GetExtendedTypeNames(assembly);
                 Log.Debug("Loader.TryCreateILAlgorithm(): Assembly types: " + string.Join(",", types));
 
@@ -287,8 +265,8 @@ namespace QuantConnect.AlgorithmFactory
 
                     if (string.IsNullOrEmpty(types[0]))
                     {
-                        errorMessage = "Please verify algorithm type name matches the algorithm name in the configuration file. Unable to resolve multiple algorithm types to a single type.";
-                        Log.Error("Loader.TryCreateILAlgorithm(): Failed resolving multiple algorithm types to a single type.");
+                        errorMessage = "Algorithm type name not found, or unable to resolve multiple algorithm types to a single type. Please verify algorithm type name matches the algorithm name in the configuration file and that there is one and only one class derived from QCAlgorithm.";
+                        Log.Error($"Loader.TryCreateILAlgorithm(): {errorMessage}");
                         return false;
                     }
                 }
@@ -309,8 +287,10 @@ namespace QuantConnect.AlgorithmFactory
             }
             catch (Exception err)
             {
-                Log.Error(err);
-                if (err.InnerException != null) errorMessage = err.InnerException.Message;
+                errorMessage = "Algorithm type name not found, or unable to resolve multiple algorithm types to a single type. Please verify algorithm type name matches the algorithm name in the configuration file and that there is one and only one class derived from QCAlgorithm.";
+                errorMessage += err.InnerException == null ? err.Message : err.InnerException.Message;
+                Log.Error($"Loader.TryCreateILAlgorithm(): {errorMessage}");
+                return false;
             }
 
             return true;
@@ -321,7 +301,7 @@ namespace QuantConnect.AlgorithmFactory
         /// </summary>
         /// <param name="assembly">Assembly dll we're loading.</param>
         /// <returns>String list of types available.</returns>
-        public static List<string> GetExtendedTypeNames(Assembly assembly) 
+        public static List<string> GetExtendedTypeNames(Assembly assembly)
         {
             var types = new List<string>();
             try
@@ -333,7 +313,18 @@ namespace QuantConnect.AlgorithmFactory
                 }
                 catch (ReflectionTypeLoadException e)
                 {
-                    assemblyTypes = e.Types;
+                    // We may want to exclude possible null values
+                    // See https://stackoverflow.com/questions/7889228/how-to-prevent-reflectiontypeloadexception-when-calling-assembly-gettypes
+                    assemblyTypes = e.Types.Where(t => t != null).ToArray();
+
+                    var countTypesNotLoaded = e.LoaderExceptions.Length;
+                    Log.Error($"Loader.GetExtendedTypeNames(): Unable to load {countTypesNotLoaded} of the requested types, " +
+                              "see below for more details on what causes an issue:");
+
+                    foreach (Exception inner in e.LoaderExceptions)
+                    {
+                        Log.Error($"Loader.GetExtendedTypeNames(): {inner.Message}");
+                    }
                 }
 
                 if (assemblyTypes != null && assemblyTypes.Length > 0)
@@ -343,6 +334,7 @@ namespace QuantConnect.AlgorithmFactory
                              where !t.IsAbstract                                // require concrete impl
                              where AlgorithmInterfaceType.IsAssignableFrom(t)   // require derived from IAlgorithm
                              where t.FullName != AlgorithmBaseTypeFullName      // require not equal to QuantConnect.QCAlgorithm
+                             where t.FullName != FrameworkBaseTypeFullName      // require not equal to QuantConnect.QCAlgorithmFramework
                              where t.GetConstructor(Type.EmptyTypes) != null    // require default ctor
                              select t.FullName).ToList();
                 }
@@ -366,7 +358,7 @@ namespace QuantConnect.AlgorithmFactory
         /// <param name="ramLimit">Limit of the RAM for this process</param>
         /// <param name="algorithmInstance">Output algorithm instance</param>
         /// <param name="errorMessage">Output error message on failure</param>
-        /// <returns>bool success</returns>     
+        /// <returns>bool success</returns>
         public bool TryCreateAlgorithmInstanceWithIsolator(string assemblyPath, int ramLimit, out IAlgorithm algorithmInstance, out string errorMessage)
         {
             IAlgorithm instance = null;
@@ -377,7 +369,7 @@ namespace QuantConnect.AlgorithmFactory
             var complete = isolator.ExecuteWithTimeLimit(_loaderTimeLimit, () =>
             {
                 success = TryCreateAlgorithmInstance(assemblyPath, out instance, out error);
-            }, ramLimit); 
+            }, ramLimit, sleepIntervalMillis:50, workerThread:_workerThread);
 
             algorithmInstance = instance;
             errorMessage = error;
@@ -396,9 +388,9 @@ namespace QuantConnect.AlgorithmFactory
         /// Unload this factory's appDomain.
         /// </summary>
         /// <remarks>Not used in lean engine. Running the library in an app domain is 10x slower.</remarks>
-        /// <seealso cref="CreateAppDomain"/>
+        /// <seealso cref="AppDomain.CreateDomain(string, Evidence, string, string, bool, AppDomainInitializer, string[])"/>
         public void Unload() {
-            if (appDomain != null) 
+            if (appDomain != null)
             {
                 AppDomain.Unload(appDomain);
                 appDomain = null;

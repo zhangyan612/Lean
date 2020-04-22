@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -35,7 +35,10 @@ namespace QuantConnect.Messaging
         public static readonly bool IsEnabled = Config.GetBool("send-via-api");
 
         // Client for sending asynchronous requests.
-        private static readonly RestClient Client = new RestClient("http://streaming.quantconnect.com");
+        private static readonly RestClient Client = new RestClient("http://streaming.quantconnect.com")
+        {
+            Timeout = 300000
+        };
 
         /// <summary>
         /// Send a message to the QuantConnect Chart Streaming API.
@@ -43,11 +46,12 @@ namespace QuantConnect.Messaging
         /// <param name="userId">User Id</param>
         /// <param name="apiToken">API token for authentication</param>
         /// <param name="packet">Packet to transmit</param>
-        public static void Transmit(int userId, string apiToken, Packet packet)
+        /// <param name="jsonConverters">Optional json converters to use to convert the packet</param>
+        public static void Transmit(int userId, string apiToken, Packet packet, params JsonConverter[] jsonConverters)
         {
             try
             {
-                var tx = JsonConvert.SerializeObject(packet);
+                var tx = JsonConvert.SerializeObject(packet, jsonConverters);
                 if (tx.Length > 10000)
                 {
                     Log.Trace("StreamingApi.Transmit(): Packet too long: " + packet.GetType());

@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,7 +19,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using CloneExtensions;
 using Fasterflect;
-using QuantConnect.Securities;
+using QuantConnect.Logging;
 
 namespace QuantConnect.Util
 {
@@ -119,9 +119,34 @@ namespace QuantConnect.Util
             var clone = Clone((object)instanceToClone) as T;
             if (clone == null)
             {
-                throw new Exception("Unable to clone instance of type " + instanceToClone.GetType().Name + " to " + typeof(T).Name);
+                throw new ArgumentException($"Unable to clone instance of type {instanceToClone.GetType().Name} to {typeof(T).Name}");
             }
             return clone;
+        }
+
+        /// <summary>
+        /// Adds method to return an instance of object
+        /// </summary>
+        /// <param name="key">The key of the method to add</param>
+        /// <param name="value">The value of the method to add</param>
+        public static void AddActivator(Type key, Func<object[], object> value)
+        {
+            if (!_activatorsByType.ContainsKey(key))
+            {
+                _activatorsByType.Add(key, value);
+            }
+            else
+            {
+                throw new ArgumentException($"ObjectActivator.AddActivator(): a method to return an instance of {key.Name} has already been added");
+            }
+        }
+
+        /// <summary>
+        /// Reset the object activators
+        /// </summary>
+        public static void ResetActivators()
+        {
+            _activatorsByType.Clear();
         }
     }
 }

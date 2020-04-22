@@ -3,6 +3,7 @@
 *.ko
 *.obj
 *.elf
+*.pyc
 
 # Visual Studio Project Items:
 *.suo
@@ -33,6 +34,8 @@
 
 # QC Cloud Setup Bash Files
 *.sh
+# Include docker build scripts for Mac/Linux
+!run_docker.sh
 
 # QC Config Files:
 # config.json
@@ -165,6 +168,9 @@ AutoTest.Net/
 # Installshield output folder
 [Ee]xpress/
 
+# JetBrains Rider
+.idea/
+
 # DocProject is a documentation generator add-in
 DocProject/buildhelp/
 DocProject/Help/*.HxT
@@ -252,3 +258,12 @@ Charts/
 # NCrunch files
 *.ncrunchsolution
 *.ncrunchproject
+
+# QuantConnect plugin files
+QuantConnectProjects.xml
+Launcher/Plugins/*
+/ApiPython/dist
+/ApiPython/quantconnect.egg-info
+/ApiPython/quantconnect.egg-info/*
+
+QuantConnect.Lean.sln.DotSettings*

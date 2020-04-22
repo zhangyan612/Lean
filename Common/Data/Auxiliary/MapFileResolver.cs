@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,9 +17,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
-using QuantConnect.Logging;
 using QuantConnect.Util;
 
 namespace QuantConnect.Data.Auxiliary
@@ -70,7 +70,7 @@ namespace QuantConnect.Data.Auxiliary
                         // check to verify it' the same data
                         if (!entries[mapFileRowEntry.MapFileRow.Date].Equals(mapFileRowEntry))
                         {
-                            throw new Exception("Attempted to assign different history for symbol.");
+                            throw new DuplicateNameException("Attempted to assign different history for symbol.");
                         }
                     }
                     else
@@ -90,7 +90,7 @@ namespace QuantConnect.Data.Auxiliary
         /// <returns>The collection of map files capable of mapping equity symbols within the specified market</returns>
         public static MapFileResolver Create(string dataDirectory, string market)
         {
-            return Create(Path.Combine(dataDirectory, "equity", market.ToLower(), "map_files"));
+            return Create(Path.Combine(dataDirectory, "equity", market.ToLowerInvariant(), "map_files"));
         }
 
         /// <summary>
@@ -112,7 +112,7 @@ namespace QuantConnect.Data.Auxiliary
         public MapFile GetByPermtick(string permtick)
         {
             MapFile mapFile;
-            _mapFilesByPermtick.TryGetValue(permtick.ToUpper(), out mapFile);
+            _mapFilesByPermtick.TryGetValue(permtick.LazyToUpper(), out mapFile);
             return mapFile;
         }
 
@@ -133,6 +133,10 @@ namespace QuantConnect.Data.Auxiliary
                     return new MapFile(symbol, new List<MapFileRow>());
                 }
 
+                // Return value of BinarySearch (from MSDN):
+                // The zero-based index of item in the sorted List<T>, if item is found;
+                // otherwise, a negative number that is the bitwise complement of the index of the next element that is larger than item
+                // or, if there is no larger element, the bitwise complement of Count.
                 var indexOf = entries.Keys.BinarySearch(date);
                 if (indexOf >= 0)
                 {
@@ -140,18 +144,24 @@ namespace QuantConnect.Data.Auxiliary
                 }
                 else
                 {
-                    // if negative, it's the bitwise complement of where it should be
-                    indexOf = ~indexOf;
-                    if (indexOf < 0 || indexOf > entries.Values.Count - 1)
+                    if (indexOf == ~entries.Keys.Count)
                     {
-                        return new MapFile(symbol, new List<MapFileRow>());
+                        // the searched date is greater than the last date in the list, return the last entry
+                        indexOf = entries.Keys.Count - 1;
                     }
+                    else
+                    {
+                        // if negative, it's the bitwise complement of where it should be
+                        indexOf = ~indexOf;
+                    }
+
                     symbol = entries.Values[indexOf].EntitySymbol;
                 }
             }
             // secondary search for exact mapping, find path than ends with symbol.csv
             MapFile mapFile;
-            if (!_mapFilesByPermtick.TryGetValue(symbol, out mapFile))
+            if (!_mapFilesByPermtick.TryGetValue(symbol, out mapFile)
+                || mapFile.FirstDate > date)
             {
                 return new MapFile(symbol, new List<MapFileRow>());
             }

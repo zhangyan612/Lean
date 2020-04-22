@@ -1,11 +1,11 @@
 /*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,7 +19,6 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
-using QuantConnect.Util;
 
 namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators
 {
@@ -36,6 +35,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators
         private volatile bool _end;
         private volatile bool _disposed;
 
+        private readonly bool _isBlocking;
         private readonly int _timeout;
         private readonly object _lock = new object();
         private readonly BlockingCollection<T> _blockingCollection;
@@ -64,12 +64,21 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators
         }
 
         /// <summary>
+        /// Returns true if the enumerator has finished and will not accept any more data
+        /// </summary>
+        public bool HasFinished
+        {
+            get { return _end || _disposed; }
+        }
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="EnqueueableEnumerator{T}"/> class
         /// </summary>
         /// <param name="blocking">Specifies whether or not to use the blocking behavior</param>
         public EnqueueableEnumerator(bool blocking = false)
         {
             _blockingCollection = new BlockingCollection<T>();
+            _isBlocking = blocking;
             _timeout = blocking ? Timeout.Infinite : 0;
         }
 
@@ -115,6 +124,16 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators
             if (!_blockingCollection.TryTake(out current, _timeout))
             {
                 _current = default(T);
+
+                // if the enumerator has blocking behavior and there is no more data, it has ended
+                if (_isBlocking)
+                {
+                    lock (_lock)
+                    {
+                        _end = true;
+                    }
+                }
+
                 return !_end;
             }
 

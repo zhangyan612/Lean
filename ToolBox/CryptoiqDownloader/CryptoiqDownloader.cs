@@ -23,22 +23,20 @@ using System.Linq;
 namespace QuantConnect.ToolBox.CryptoiqDownloader
 {
     /// <summary>
-    /// Cryptoiq Data Downloader class 
+    /// Cryptoiq Data Downloader class
     /// </summary>
     public class CryptoiqDownloader : IDataDownloader
     {
         private readonly string _exchange;
-        private readonly decimal _scaleFactor;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="CryptoiqDownloader"/> class
         /// </summary>
         /// <param name="exchange">The bitcoin exchange</param>
         /// <param name="scaleFactor">Scale factor used to scale the data, useful for changing the BTC units</param>
-        public CryptoiqDownloader(string exchange = "bitfinex", decimal scaleFactor = 1m)
+        public CryptoiqDownloader(string exchange = Market.GDAX)
         {
             _exchange = exchange;
-            _scaleFactor = scaleFactor;
         }
 
         /// <summary>
@@ -58,7 +56,6 @@ namespace QuantConnect.ToolBox.CryptoiqDownloader
 
             var hour = 1;
             var counter = startUtc;
-            const string url = "http://cryptoiq.io/api/marketdata/ticker/{3}/{2}/{0}/{1}";
 
             while (counter <= endUtc)
             {
@@ -66,7 +63,7 @@ namespace QuantConnect.ToolBox.CryptoiqDownloader
                 {
                     using (var cl = new WebClient())
                     {
-                        var request = string.Format(url, counter.ToString("yyyy-MM-dd"), hour, symbol.Value, _exchange);
+                        var request = $"http://cryptoiq.io/api/marketdata/ticker/{_exchange}/{symbol.Value}/{counter.ToStringInvariant("yyyy-MM-dd")}/{hour}";
                         var data = cl.DownloadString(request);
 
                         var mbtc = JsonConvert.DeserializeObject<List<CryptoiqBitcoin>>(data);
@@ -76,9 +73,9 @@ namespace QuantConnect.ToolBox.CryptoiqDownloader
                             {
                                 Time = item.Time,
                                 Symbol = symbol,
-                                Value = item.Last/_scaleFactor,
-                                AskPrice = item.Ask/_scaleFactor,
-                                BidPrice = item.Bid/_scaleFactor,
+                                Value = item.Last,
+                                AskPrice = item.Ask,
+                                BidPrice = item.Bid,
                                 TickType = TickType.Quote
                             };
                         }

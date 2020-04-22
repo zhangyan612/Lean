@@ -1,11 +1,11 @@
 ﻿/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); 
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,14 +16,18 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
+using QuantConnect.Benchmarks;
+using QuantConnect.Data;
 using QuantConnect.Data.UniverseSelection;
 using QuantConnect.Interfaces;
 using QuantConnect.Lean.Engine.DataFeeds.Enumerators.Factories;
 using QuantConnect.Logging;
-using QuantConnect.Orders;
-using QuantConnect.Packets;
 using QuantConnect.Securities;
 using QuantConnect.Util;
+using QuantConnect.Data.Fundamental;
+using QuantConnect.Securities.Future;
+using QuantConnect.Securities.Option;
 
 namespace QuantConnect.Lean.Engine.DataFeeds
 {
@@ -32,24 +36,44 @@ namespace QuantConnect.Lean.Engine.DataFeeds
     /// </summary>
     public class UniverseSelection
     {
-        private readonly IDataFeed _dataFeed;
+        private IDataFeedSubscriptionManager _dataManager;
         private readonly IAlgorithm _algorithm;
-        private readonly SubscriptionLimiter _limiter;
-        private readonly MarketHoursDatabase _marketHoursDatabase = MarketHoursDatabase.FromDataFolder();
-        private readonly SymbolPropertiesDatabase _symbolPropertiesDatabase = SymbolPropertiesDatabase.FromDataFolder();
-        private readonly HashSet<Security> _pendingRemovals = new HashSet<Security>();
+        private readonly ISecurityService _securityService;
+        private readonly Dictionary<DateTime, Dictionary<Symbol, Security>> _pendingSecurityAdditions = new Dictionary<DateTime, Dictionary<Symbol, Security>>();
+        private readonly PendingRemovalsManager _pendingRemovalsManager;
+        private readonly CurrencySubscriptionDataConfigManager _currencySubscriptionDataConfigManager;
+        private bool _initializedSecurityBenchmark;
+        private bool _anyDoesNotHaveFundamentalDataWarningLogged;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="UniverseSelection"/> class
         /// </summary>
-        /// <param name="dataFeed">The data feed to add/remove subscriptions from</param>
         /// <param name="algorithm">The algorithm to add securities to</param>
-        /// <param name="controls">Specifies limits on the algorithm's memory usage</param>
-        public UniverseSelection(IDataFeed dataFeed, IAlgorithm algorithm, Controls controls)
+        /// <param name="securityService"></param>
+        public UniverseSelection(
+            IAlgorithm algorithm,
+            ISecurityService securityService)
         {
-            _dataFeed = dataFeed;
             _algorithm = algorithm;
-            _limiter = new SubscriptionLimiter(() => dataFeed.Subscriptions, controls.TickLimit, controls.SecondLimit, controls.MinuteLimit);
+
+            _securityService = securityService;
+            _pendingRemovalsManager = new PendingRemovalsManager(algorithm.Transactions);
+            _currencySubscriptionDataConfigManager = new CurrencySubscriptionDataConfigManager(algorithm.Portfolio.CashBook,
+                algorithm.Securities,
+                algorithm.SubscriptionManager,
+                _securityService);
+        }
+
+        /// <summary>
+        /// Sets the data manager
+        /// </summary>
+        public void SetDataManager(IDataFeedSubscriptionManager dataManager)
+        {
+            if (_dataManager != null)
+            {
+                throw new Exception("UniverseSelection.SetDataManager(): can only be set once");
+            }
+            _dataManager = dataManager;
         }
 
         /// <summary>
@@ -60,6 +84,12 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         /// <param name="universeData">The data provided to perform selection with</param>
         public SecurityChanges ApplyUniverseSelection(Universe universe, DateTime dateTimeUtc, BaseDataCollection universeData)
         {
+            var algorithmEndDateUtc = _algorithm.EndDate.ConvertToUtc(_algorithm.TimeZone);
+            if (dateTimeUtc > algorithmEndDateUtc)
+            {
+                return SecurityChanges.None;
+            }
+
             IEnumerable<Symbol> selectSymbolsResult;
 
             // check if this universe must be filtered with fine fundamental data
@@ -69,32 +99,113 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 // perform initial filtering and limit the result
                 selectSymbolsResult = universe.SelectSymbols(dateTimeUtc, universeData);
 
-                // prepare a BaseDataCollection of FineFundamental instances
-                var fineCollection = new BaseDataCollection();
-                var dataProvider = new DefaultDataProvider();
-
-                foreach (var symbol in selectSymbolsResult)
+                if (!ReferenceEquals(selectSymbolsResult, Universe.Unchanged))
                 {
-                    var factory = new FineFundamentalSubscriptionEnumeratorFactory(_algorithm.LiveMode, x => new[] { dateTimeUtc });
-                    var config = FineFundamentalUniverse.CreateConfiguration(symbol);
+                    // prepare a BaseDataCollection of FineFundamental instances
+                    var fineCollection = new BaseDataCollection();
+                    var dataProvider = new DefaultDataProvider();
 
-                    Security security;
-                    if (!_algorithm.Securities.TryGetValue(symbol, out security))
+                    // Create a dictionary of CoarseFundamental keyed by Symbol that also has FineFundamental
+                    // Coarse raw data has SID collision on: CRHCY R735QTJ8XC9X
+                    var coarseData = universeData.Data.OfType<CoarseFundamental>()
+                        .Where(c => c.HasFundamentalData)
+                        .DistinctBy(c => c.Symbol)
+                        .ToDictionary(c => c.Symbol);
+
+                    // Remove selected symbols that does not have fine fundamental data
+                    var anyDoesNotHaveFundamentalData = false;
+                    selectSymbolsResult = selectSymbolsResult
+                        .Where(
+                            symbol =>
+                            {
+                                var result = coarseData.ContainsKey(symbol);
+                                anyDoesNotHaveFundamentalData |= !result;
+                                return result;
+                            }
+                        );
+
+                    if (!_anyDoesNotHaveFundamentalDataWarningLogged && anyDoesNotHaveFundamentalData)
                     {
-                        security = universe.CreateSecurity(symbol, _algorithm, _marketHoursDatabase, _symbolPropertiesDatabase);
-                        _algorithm.Securities.Add(security);
+                        _algorithm.Debug("Note: Your coarse selection filter was updated to exclude symbols without fine fundamental data. Make sure your coarse filter excludes symbols where HasFundamental is false.");
+                        _anyDoesNotHaveFundamentalDataWarningLogged = true;
                     }
 
-                    var request = new SubscriptionRequest(true, universe, security, config, dateTimeUtc, dateTimeUtc);
-                    var enumerator = factory.CreateEnumerator(request, dataProvider);
-                    if (enumerator.MoveNext())
+                    // use all available threads, the entire system is waiting for this to complete
+                    var options = new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount };
+                    Parallel.ForEach(selectSymbolsResult, options, symbol =>
                     {
-                        fineCollection.Data.Add(enumerator.Current);
+                        var config = FineFundamentalUniverse.CreateConfiguration(symbol);
+                        var security = _securityService.CreateSecurity(symbol,
+                            config,
+                            addToSymbolCache: false);
+
+                        var localStartTime = dateTimeUtc.ConvertFromUtc(config.ExchangeTimeZone).AddDays(-1);
+                        var factory = new FineFundamentalSubscriptionEnumeratorFactory(_algorithm.LiveMode, x => new[] { localStartTime });
+                        var request = new SubscriptionRequest(true, universe, security, new SubscriptionDataConfig(config), localStartTime, localStartTime);
+                        using (var enumerator = factory.CreateEnumerator(request, dataProvider))
+                        {
+                            if (enumerator.MoveNext())
+                            {
+                                lock (fineCollection.Data)
+                                {
+                                    fineCollection.Data.Add(enumerator.Current);
+                                }
+                            }
+                        }
+                    });
+
+                    // WARNING -- HACK ATTACK -- WARNING
+                    // Fine universes are considered special due to their chaining behavior.
+                    // As such, we need a means of piping the fine data read in here back to the data feed
+                    // so that it can be properly emitted via a TimeSlice.Create call. There isn't a mechanism
+                    // in place for this function to return such data. The following lines are tightly coupled
+                    // to the universeData dictionaries in SubscriptionSynchronizer and LiveTradingDataFeed and
+                    // rely on reference semantics to work.
+
+                    universeData.Data = new List<BaseData>();
+                    foreach (var fine in fineCollection.Data.OfType<FineFundamental>())
+                    {
+                        var fundamentals = new Fundamentals
+                        {
+                            Symbol = fine.Symbol,
+                            Time = fine.Time,
+                            EndTime = fine.EndTime,
+                            DataType = fine.DataType,
+                            AssetClassification = fine.AssetClassification,
+                            CompanyProfile = fine.CompanyProfile,
+                            CompanyReference = fine.CompanyReference,
+                            EarningReports = fine.EarningReports,
+                            EarningRatios = fine.EarningRatios,
+                            FinancialStatements = fine.FinancialStatements,
+                            OperationRatios = fine.OperationRatios,
+                            SecurityReference = fine.SecurityReference,
+                            ValuationRatios = fine.ValuationRatios
+                        };
+
+                        CoarseFundamental coarse;
+                        if (coarseData.TryGetValue(fine.Symbol, out coarse))
+                        {
+                            // the only time the coarse data won't exist is if the selection function
+                            // doesn't use the data provided, and instead returns a constant list of
+                            // symbols -- coupled with a potential hole in the data
+                            fundamentals.Value = coarse.Value;
+                            fundamentals.Market = coarse.Market;
+                            fundamentals.Volume = coarse.Volume;
+                            fundamentals.DollarVolume = coarse.DollarVolume;
+                            fundamentals.HasFundamentalData = coarse.HasFundamentalData;
+
+                            // set the fine fundamental price property to yesterday's closing price
+                            fine.Value = coarse.Value;
+                        }
+
+                        universeData.Data.Add(fundamentals);
                     }
+
+                    // END -- HACK ATTACK -- END
+
+                    // perform the fine fundamental universe selection
+                    selectSymbolsResult = fineFiltered.FineFundamentalUniverse.PerformSelection(dateTimeUtc, fineCollection);
                 }
-
-                // perform the fine fundamental universe selection
-                selectSymbolsResult = fineFiltered.FineFundamentalUniverse.PerformSelection(dateTimeUtc, fineCollection);
             }
             else
             {
@@ -102,29 +213,24 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 selectSymbolsResult = universe.PerformSelection(dateTimeUtc, universeData);
             }
 
-            // check for no changes first
-            if (ReferenceEquals(selectSymbolsResult, Universe.Unchanged))
-            {
-                return SecurityChanges.None;
-            }
-
             // materialize the enumerable into a set for processing
             var selections = selectSymbolsResult.ToHashSet();
 
             var additions = new List<Security>();
             var removals = new List<Security>();
-            var algorithmEndDateUtc = _algorithm.EndDate.ConvertToUtc(_algorithm.TimeZone);
 
-            // remove previously deselected members which were kept in the universe because of holdings or open orders
-            foreach (var member in _pendingRemovals.ToList())
+            // first check for no pending removals, even if the universe selection
+            // didn't change we might need to remove a security because a position was closed
+            RemoveSecurityFromUniverse(
+                _pendingRemovalsManager.CheckPendingRemovals(selections, universe),
+                removals,
+                dateTimeUtc,
+                algorithmEndDateUtc);
+
+            // check for no changes second
+            if (ReferenceEquals(selectSymbolsResult, Universe.Unchanged))
             {
-                var openOrders = _algorithm.Transactions.GetOrders(x => x.Status.IsOpen() && x.Symbol == member.Symbol);
-                if (!member.HoldStock && !openOrders.Any())
-                {
-                    RemoveSecurityFromUniverse(universe, member, removals, dateTimeUtc, algorithmEndDateUtc);
-
-                    _pendingRemovals.Remove(member);
-                }
+                return SecurityChanges.None;
             }
 
             // determine which data subscriptions need to be removed from this universe
@@ -141,44 +247,74 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 // until open orders are closed and the security is liquidated
                 removals.Add(member);
 
-                // but don't physically remove it from the algorithm if we hold stock or have open orders against it
-                var openOrders = _algorithm.Transactions.GetOrders(x => x.Status.IsOpen() && x.Symbol == member.Symbol);
-                if (!member.HoldStock && !openOrders.Any())
-                {
-                    RemoveSecurityFromUniverse(universe, member, removals, dateTimeUtc, algorithmEndDateUtc);
-                }
-                else
-                {
-                    _pendingRemovals.Add(member);
-                }
+                RemoveSecurityFromUniverse(_pendingRemovalsManager.TryRemoveMember(member, universe),
+                    removals,
+                    dateTimeUtc,
+                    algorithmEndDateUtc);
+            }
+
+            var keys = _pendingSecurityAdditions.Keys;
+            if (keys.Any() && keys.Single() != dateTimeUtc)
+            {
+                // if the frontier moved forward then we've added these securities to the algorithm
+                _pendingSecurityAdditions.Clear();
+            }
+
+            Dictionary<Symbol, Security> pendingAdditions;
+            if (!_pendingSecurityAdditions.TryGetValue(dateTimeUtc, out pendingAdditions))
+            {
+                // keep track of created securities so we don't create the same security twice, leads to bad things :)
+                pendingAdditions = new Dictionary<Symbol, Security>();
+                _pendingSecurityAdditions[dateTimeUtc] = pendingAdditions;
             }
 
             // find new selections and add them to the algorithm
             foreach (var symbol in selections)
             {
+                if (universe.Securities.ContainsKey(symbol))
+                {
+                    // if its already part of the universe no need to re add it
+                    continue;
+                }
+
                 // create the new security, the algorithm thread will add this at the appropriate time
                 Security security;
-                if (!_algorithm.Securities.TryGetValue(symbol, out security))
+                if (!pendingAdditions.TryGetValue(symbol, out security) && !_algorithm.Securities.TryGetValue(symbol, out security))
                 {
-                    security = universe.CreateSecurity(symbol, _algorithm, _marketHoursDatabase, _symbolPropertiesDatabase);
+                    // For now this is required for retro compatibility with usages of security.Subscriptions
+                    var configs = _algorithm.SubscriptionManager.SubscriptionDataConfigService.Add(symbol,
+                        universe.UniverseSettings.Resolution,
+                        universe.UniverseSettings.FillForward,
+                        universe.UniverseSettings.ExtendedMarketHours,
+                        dataNormalizationMode: universe.UniverseSettings.DataNormalizationMode);
+
+                    security = _securityService.CreateSecurity(symbol, configs, universe.UniverseSettings.Leverage, symbol.ID.SecurityType == SecurityType.Option);
+
+                    pendingAdditions.Add(symbol, security);
+
+                    SetUnderlyingSecurity(universe, security);
                 }
 
                 var addedSubscription = false;
 
-                foreach (var request in universe.GetSubscriptionRequests(security, dateTimeUtc, algorithmEndDateUtc))
+                foreach (var request in universe.GetSubscriptionRequests(security, dateTimeUtc, algorithmEndDateUtc,
+                                                                         _algorithm.SubscriptionManager.SubscriptionDataConfigService))
                 {
-                    // ask the limiter if we can add another subscription at that resolution
-                    string reason;
-                    if (!_limiter.CanAddSubscription(request.Configuration.Resolution, out reason))
+                    if (security.Symbol == request.Configuration.Symbol // Just in case check its the same symbol, else AddData will throw.
+                        && !security.Subscriptions.Contains(request.Configuration))
                     {
-                        // should we be counting universe subscriptions against user subscriptions limits?
-
-                        _algorithm.Error(reason);
-                        Log.Trace("UniverseSelection.ApplyUniverseSelection(): Skipping adding subscription: " + request.Configuration.Symbol.ToString() + ": " + reason);
-                        continue;
+                        // For now this is required for retro compatibility with usages of security.Subscriptions
+                        security.AddData(request.Configuration);
                     }
-                    // add the new subscriptions to the data feed
-                    _dataFeed.AddSubscription(request);
+
+                    var toRemove = _currencySubscriptionDataConfigManager.GetSubscriptionDataConfigToRemove(request.Configuration.Symbol);
+                    if (toRemove != null)
+                    {
+                        Log.Trace($"UniverseSelection.ApplyUniverseSelection(): Removing internal currency data feed {toRemove}");
+                        _dataManager.RemoveSubscription(toRemove);
+                    }
+
+                    _dataManager.AddSubscription(request);
 
                     // only update our security changes if we actually added data
                     if (!request.IsUniverseSubscription)
@@ -198,53 +334,166 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 }
             }
 
-            // Add currency data feeds that weren't explicitly added in Initialize
-            if (additions.Count > 0)
-            {
-                var addedSecurities = _algorithm.Portfolio.CashBook.EnsureCurrencyDataFeeds(_algorithm.Securities, _algorithm.SubscriptionManager, _marketHoursDatabase, _symbolPropertiesDatabase, _algorithm.BrokerageModel.DefaultMarkets);
-                foreach (var security in addedSecurities)
-                {
-                    // assume currency feeds are always one subscription per, these are typically quote subscriptions
-                    _dataFeed.AddSubscription(new SubscriptionRequest(false, universe, security, security.Subscriptions.First(), dateTimeUtc, algorithmEndDateUtc));
-                }
-            }
-
             // return None if there's no changes, otherwise return what we've modified
             var securityChanges = additions.Count + removals.Count != 0
                 ? new SecurityChanges(additions, removals)
                 : SecurityChanges.None;
 
-            if (securityChanges != SecurityChanges.None)
+            // Add currency data feeds that weren't explicitly added in Initialize
+            if (additions.Count > 0)
             {
+                EnsureCurrencyDataFeeds(securityChanges);
+            }
+
+            if (securityChanges != SecurityChanges.None && Log.DebuggingEnabled)
+            {
+                // for performance lets not create the message string if debugging is not enabled
+                // this can be executed many times and its in the algorithm thread
                 Log.Debug("UniverseSelection.ApplyUniverseSelection(): " + dateTimeUtc + ": " + securityChanges);
             }
 
             return securityChanges;
         }
 
-        private void RemoveSecurityFromUniverse(Universe universe, Security member, List<Security> removals, DateTime dateTimeUtc, DateTime algorithmEndDateUtc)
+        /// <summary>
+        /// Will add any pending internal currency subscriptions
+        /// </summary>
+        /// <param name="utcStart">The current date time in utc</param>
+        /// <returns>Will return true if any subscription was added</returns>
+        public bool AddPendingInternalDataFeeds(DateTime utcStart)
         {
-            // safe to remove the member from the universe
-            universe.RemoveMember(dateTimeUtc, member);
-
-            // we need to mark this security as untradeable while it has no data subscription
-            // it is expected that this function is called while in sync with the algo thread,
-            // so we can make direct edits to the security here
-            member.Cache.Reset();
-            foreach (var subscription in universe.GetSubscriptionRequests(member, dateTimeUtc, algorithmEndDateUtc))
+            var added = false;
+            if (!_initializedSecurityBenchmark)
             {
-                if (subscription.IsUniverseSubscription)
+                _initializedSecurityBenchmark = true;
+
+                var securityBenchmark = _algorithm.Benchmark as SecurityBenchmark;
+                if (securityBenchmark != null)
                 {
-                    removals.Remove(member);
-                }
-                else
-                {
-                    _dataFeed.RemoveSubscription(subscription.Configuration);
+                    // we want to start from the previous tradable bar so the benchmark security
+                    // never has 0 price
+                    var previousTradableBar = Time.GetStartTimeForTradeBars(
+                        securityBenchmark.Security.Exchange.Hours,
+                        utcStart.ConvertFromUtc(securityBenchmark.Security.Exchange.TimeZone),
+                        _algorithm.LiveMode ? Time.OneMinute : Time.OneDay,
+                        1,
+                        false).ConvertToUtc(securityBenchmark.Security.Exchange.TimeZone);
+
+                    var dataConfig = _algorithm.SubscriptionManager.SubscriptionDataConfigService.Add(
+                        securityBenchmark.Security.Symbol,
+                        _algorithm.LiveMode ? Resolution.Minute : Resolution.Hour,
+                        isInternalFeed: true,
+                        fillForward: false).First();
+
+                    if (dataConfig != null)
+                    {
+                        added |= _dataManager.AddSubscription(new SubscriptionRequest(
+                            false,
+                            null,
+                            securityBenchmark.Security,
+                            dataConfig,
+                            previousTradableBar,
+                            _algorithm.EndDate.ConvertToUtc(_algorithm.TimeZone)));
+
+                        Log.Trace($"UniverseSelection.AddPendingInternalDataFeeds(): Adding internal benchmark data feed {dataConfig}");
+                    }
                 }
             }
 
-            // remove symbol mappings for symbols removed from universes // TODO : THIS IS BAD!
-            SymbolCache.TryRemove(member.Symbol);
+            if (_currencySubscriptionDataConfigManager.UpdatePendingSubscriptionDataConfigs(_algorithm.BrokerageModel))
+            {
+                foreach (var subscriptionDataConfig in _currencySubscriptionDataConfigManager
+                    .GetPendingSubscriptionDataConfigs())
+                {
+                    var security = _algorithm.Securities[subscriptionDataConfig.Symbol];
+                    added |= _dataManager.AddSubscription(new SubscriptionRequest(
+                        false,
+                        null,
+                        security,
+                        subscriptionDataConfig,
+                        utcStart,
+                        _algorithm.EndDate.ConvertToUtc(_algorithm.TimeZone)));
+                }
+            }
+            return added;
+        }
+
+        /// <summary>
+        /// Checks the current subscriptions and adds necessary currency pair feeds to provide real time conversion data
+        /// </summary>
+        public void EnsureCurrencyDataFeeds(SecurityChanges securityChanges)
+        {
+            _currencySubscriptionDataConfigManager.EnsureCurrencySubscriptionDataConfigs(securityChanges, _algorithm.BrokerageModel);
+        }
+
+        private void RemoveSecurityFromUniverse(
+            List<PendingRemovalsManager.RemovedMember> removedMembers,
+            List<Security> removals,
+            DateTime dateTimeUtc,
+            DateTime algorithmEndDateUtc)
+        {
+            foreach (var removedMember in removedMembers)
+            {
+                var universe = removedMember.Universe;
+                var member = removedMember.Security;
+
+                // safe to remove the member from the universe
+                universe.RemoveMember(dateTimeUtc, member);
+
+                // we need to mark this security as untradeable while it has no data subscription
+                // it is expected that this function is called while in sync with the algo thread,
+                // so we can make direct edits to the security here
+                member.Cache.Reset();
+                foreach (var subscription in universe.GetSubscriptionRequests(member, dateTimeUtc, algorithmEndDateUtc,
+                                                                              _algorithm.SubscriptionManager.SubscriptionDataConfigService))
+                {
+                    if (subscription.IsUniverseSubscription)
+                    {
+                        removals.Remove(member);
+                    }
+                    else
+                    {
+                        if (_dataManager.RemoveSubscription(subscription.Configuration, universe))
+                        {
+                            member.IsTradable = false;
+                        }
+                    }
+                }
+
+                // remove symbol mappings for symbols removed from universes // TODO : THIS IS BAD!
+                SymbolCache.TryRemove(member.Symbol);
+            }
+        }
+
+        /// <summary>
+        /// This method sets the underlying security for <see cref="OptionChainUniverse"/> and <see cref="FuturesChainUniverse"/>
+        /// </summary>
+        private void SetUnderlyingSecurity(Universe universe, Security security)
+        {
+            var optionChainUniverse = universe as OptionChainUniverse;
+            var futureChainUniverse = universe as FuturesChainUniverse;
+            if (optionChainUniverse != null)
+            {
+                if (!security.Symbol.HasUnderlying)
+                {
+                    // create the underlying w/ raw mode
+                    security.SetDataNormalizationMode(DataNormalizationMode.Raw);
+                    optionChainUniverse.Option.Underlying = security;
+                }
+                else
+                {
+                    // set the underlying security and pricing model from the canonical security
+                    var option = (Option)security;
+                    option.Underlying = optionChainUniverse.Option.Underlying;
+                    option.PriceModel = optionChainUniverse.Option.PriceModel;
+                }
+            }
+            else if (futureChainUniverse != null)
+            {
+                // set the underlying security and pricing model from the canonical security
+                var future = (Future)security;
+                future.Underlying = futureChainUniverse.Future.Underlying;
+            }
         }
     }
 }
